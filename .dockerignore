@@ -1,0 +1,10 @@
+Dockerfile
+helm
+.git
+.github
+**/node_modules/
+**/dist
+npm-debug.log
+.coverage
+.coverage.*
+.env
