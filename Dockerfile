@@ -8,13 +8,16 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies and PM2
-RUN npm ci --only=production && npm install -g pm2
+RUN npm ci && npm install -g pm2
 
 # Copy source code
 COPY . .
 
 # Build TypeScript
 RUN npm run build
+
+# Remove dev dependencies
+RUN npm prune --production
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs
