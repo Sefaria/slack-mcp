@@ -24,3 +24,6 @@ plugins:
     - "successComment": false
 branches:
   - name: "main"
+  - name: "dev"
+    channel: "dev"
+    prerelease: true
