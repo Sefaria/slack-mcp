@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 import { SlackHandlerImpl } from './slack-handler';
 import { ClaudeServiceImpl } from './claude-service';
 import { Config, SlackMessageEvent } from './types';
+import { createSlackWorkflow } from './workflow';
+import { initializeServices } from './nodes';
 
 dotenv.config();
 
@@ -10,6 +12,7 @@ class SlackMCPApp {
   private app: express.Application;
   private slackHandler: SlackHandlerImpl;
   private config: Config;
+  private workflow: any;
 
   constructor() {
     this.app = express();
@@ -24,6 +27,14 @@ class SlackMCPApp {
       this.config.SLACK_BOT_TOKEN,
       claudeService
     );
+
+    // Initialize LangGraph workflow
+    initializeServices(
+      this.config.SLACK_BOT_TOKEN,
+      this.config.ANTHROPIC_API_KEY,
+      this.config.SEFARIA_MCP_URL
+    );
+    this.workflow = createSlackWorkflow();
   }
 
   private loadConfig(): Config {
@@ -74,13 +85,13 @@ class SlackMCPApp {
 
         // Handle message events
         if (type === 'event_callback' && event?.type === 'message') {
-          console.log('💬 Processing message event:', event);
+          console.log('💬 Processing message event with LangGraph:', event);
           // Respond quickly to avoid timeout
           res.status(200).send('OK');
           
-          // Process message asynchronously
-          this.slackHandler.handleMessage(event as SlackMessageEvent).catch(error => {
-            console.error('Error processing message:', error);
+          // Process message asynchronously using LangGraph workflow
+          this.processWithWorkflow(event as SlackMessageEvent).catch(error => {
+            console.error('Error processing message with workflow:', error);
           });
           return;
         }
@@ -92,6 +103,62 @@ class SlackMCPApp {
         res.status(500).json({ error: 'Internal server error' });
       }
     });
+  }
+
+  private async processWithWorkflow(event: SlackMessageEvent): Promise<void> {
+    try {
+      console.log('🔄 [WORKFLOW] Starting LangGraph workflow...');
+      console.log('🔄 [WORKFLOW] Event summary:', {
+        user: event.user,
+        channel: event.channel,
+        ts: event.ts,
+        thread_ts: event.thread_ts,
+        text_preview: event.text?.substring(0, 100)
+      });
+      
+      const initialState = {
+        slackEvent: event,
+        shouldProcess: false,
+        acknowledgmentSent: false,
+        threadHistory: [],
+        conversationContext: [],
+        messageText: null,
+        claudeResponse: null,
+        formattedResponse: null,
+        error: null,
+        errorOccurred: false
+      };
+
+      console.log('🔄 [WORKFLOW] Initial state created, invoking workflow...');
+      const result = await this.workflow.invoke(initialState);
+      
+      console.log('✅ [WORKFLOW] Workflow completed successfully');
+      console.log('✅ [WORKFLOW] Final state:', {
+        shouldProcess: result.shouldProcess,
+        acknowledgmentSent: result.acknowledgmentSent,
+        hasThreadHistory: !!result.threadHistory?.length,
+        hasConversationContext: !!result.conversationContext?.length,
+        hasClaudeResponse: !!result.claudeResponse,
+        hasFormattedResponse: !!result.formattedResponse,
+        errorOccurred: result.errorOccurred,
+        error: result.error
+      });
+      
+    } catch (error) {
+      console.error('❌ [WORKFLOW] Workflow execution failed:', error);
+      console.error('❌ [WORKFLOW] Error type:', error?.constructor?.name);
+      console.error('❌ [WORKFLOW] Error message:', error instanceof Error ? error.message : String(error));
+      console.error('❌ [WORKFLOW] Error stack:', error instanceof Error ? error.stack : 'No stack');
+      
+      // Fallback to original handler for critical failures
+      console.log('🔄 [WORKFLOW] Falling back to original handler...');
+      try {
+        await this.slackHandler.handleMessage(event);
+        console.log('✅ [WORKFLOW] Fallback handler completed successfully');
+      } catch (fallbackError) {
+        console.error('❌ [WORKFLOW] Fallback handler also failed:', fallbackError);
+      }
+    }
   }
 
   async start(port: number = this.config.PORT): Promise<void> {

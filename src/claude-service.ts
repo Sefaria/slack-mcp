@@ -14,7 +14,7 @@ export class ClaudeServiceImpl implements ClaudeService {
     try {
       const requestPayload = {
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
+        max_tokens: 8000,
         temperature: 0.7,
         messages: messages.map(msg => ({
           role: msg.role,
@@ -27,9 +27,10 @@ RESPONSE REQUIREMENTS:
 • Gauge user intent - provide short answers for simple questions, comprehensive analysis for complex ones
 • ALL claims must be sourced and cited with Sefaria links: [Source Name](https://www.sefaria.org/Reference)
 • If making unsourced claims, explicitly note: "Based on my analysis (not from a specific source):"
-• Provide only your final analysis and conclusions - never mention tool usage, searching, gathering sources, or your process
+• CRITICAL: Provide ONLY your final scholarly response. NEVER include internal search processes, tool usage descriptions, or step-by-step research narrative
 • Begin responses directly with substantive content about the topic
-• Do not use phrases like "Let me search," "I'll gather," "Now let me," or similar process descriptions
+• FORBIDDEN PHRASES: "Let me search," "I'll gather," "Now let me," "I found," "Let me look," "I'll check," or any process descriptions
+• Users should only see your final scholarly conclusions, not your research process
 
 SCHOLARLY INTEGRITY:
 • Exercise careful judgment - do not agree with users unless there is strong textual evidence to support their position
@@ -100,23 +101,98 @@ Be scholarly, intellectually honest, and academically rigorous while remaining h
 
       // Handle different response content types (text, tool use, etc.)
       let responseText = '';
+      const textBlocks: string[] = [];
+      const toolUses: any[] = [];
+      const toolResults: any[] = [];
       
       for (const content of response.content) {
         const contentAny = content as any;
         if (content.type === 'text') {
           responseText += content.text;
+          textBlocks.push(content.text);
         } else if (contentAny.type === 'mcp_tool_use') {
           console.log('🔧 MCP tool used:', contentAny.name);
+          toolUses.push(contentAny);
         } else if (contentAny.type === 'mcp_tool_result') {
           console.log('🔧 MCP tool result:', {
             tool_use_id: contentAny.tool_use_id,
             is_error: contentAny.is_error,
             content_preview: contentAny.content?.[0]?.text?.substring(0, 500) || 'No text content'
           });
+          toolResults.push(contentAny);
         }
       }
       
-      return responseText || 'Sorry, I encountered an issue processing your request.';
+      console.log('📊 Claude response summary:', {
+        textBlocks: textBlocks.length,
+        toolUses: toolUses.length,
+        toolResults: toolResults.length,
+        finalResponseLength: responseText.length
+      });
+      
+      if (!responseText || responseText.trim().length === 0) {
+        console.error('❌ Claude returned no text content!');
+        console.error('❌ Response contained only:', {
+          textBlocks: textBlocks.length,
+          toolUses: toolUses.length,
+          toolResults: toolResults.length
+        });
+        console.error('❌ Raw response content types:', response.content.map(c => c.type));
+        
+        // Try to make a follow-up call to get Claude to synthesize the results
+        console.log('🔄 Making follow-up call to synthesize results...');
+        
+        // Add a user message asking Claude to provide the final answer
+        const followUpMessages = [
+          ...messages,
+          { role: 'assistant' as const, content: '[Tool calls completed - data gathered from sources]' },
+          { role: 'user' as const, content: 'Please provide your final answer based on the sources you just consulted.' }
+        ];
+        
+        try {
+          const followUpResponse = await this.client.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 2000,
+            temperature: 0.7,
+            messages: followUpMessages.map(msg => ({
+              role: msg.role,
+              content: msg.content
+            })),
+            system: `Based on the Sefaria sources you just consulted, provide a complete scholarly response with proper citations.
+
+SLACK FORMATTING (use exactly as specified):
+• Bold text: *bold text* (single asterisks only)
+• Italic text: _italic text_ (underscores only) 
+• Headers: *Header Text* (bold, no # symbols)
+• Bullets: • Bullet point (use bullet character)
+• Links: <https://www.sefaria.org/Genesis.3.4|Genesis 3:4> (angle brackets with pipe separator)
+• For Sefaria URLs: replace internal spaces with underscores, replace space before verses and verse colons with periods
+• Example: [Song of Songs 3:4](https://www.sefaria.org/Song of Songs 3:4) → <https://www.sefaria.org/Song_of_Songs.3.4|Song of Songs 3:4>
+• No markdown headers (#, ##, ###) - use *bold* instead
+• No double asterisks (**) - use single asterisks (*)`
+          } as any);
+          
+          // Extract text from follow-up response
+          let followUpText = '';
+          for (const content of followUpResponse.content) {
+            if (content.type === 'text') {
+              followUpText += content.text;
+            }
+          }
+          
+          if (followUpText && followUpText.trim().length > 0) {
+            console.log('✅ Follow-up response successful:', followUpText.substring(0, 200));
+            return followUpText;
+          }
+        } catch (followUpError) {
+          console.error('❌ Follow-up call failed:', followUpError);
+        }
+        
+        // If all else fails, return error message
+        return 'Sorry, I received data from sources but Claude did not provide a final response. This may be an MCP integration issue.';
+      }
+      
+      return responseText;
     } catch (error) {
       console.error('Claude service error:', error);
       
