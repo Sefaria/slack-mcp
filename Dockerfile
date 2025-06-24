@@ -25,7 +25,10 @@ RUN adduser -S nodejs -u 1001
 
 # Change ownership of the app directory
 RUN chown -R nodejs:nodejs /app
+
+# Switch to user 1001 and initialize PM2
 USER 1001
+RUN pm2 ping
 
 # Expose port
 EXPOSE 8080
