@@ -11,7 +11,7 @@ COPY package*.json ./
 # https://github.com/keymetrics/docker-pm2/issues/21#issuecomment-315534868
 RUN mkdir -p /home/app/.npm-global/bin \
     && npm config set prefix '/home/app/.npm-global' \
-    && npm ci
+    && npm ci \
     && npm install -g pm2
 
 ENV PATH=/home/app/.npm-global/bin:${PATH}
