@@ -2,29 +2,13 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
-
-RUN chown -R nodejs:nodejs /app /home
-
-USER 1001
-
 COPY package*.json ./
 
-# Install dependencies and PM2
-# https://github.com/keymetrics/docker-pm2/issues/21#issuecomment-315534868
-RUN mkdir -p /home/app/.npm-global/bin \
-    && npm config set prefix '/home/app/.npm-global' \
-    && npm ci \
-    && npm install -g pm2
-
-ENV PATH=/home/app/.npm-global/bin:${PATH}
+RUN npm ci && npm install -g pm2
 
 COPY . .
 
 RUN npm run build
-
-RUN pm2 ping
 
 EXPOSE 8080
 
