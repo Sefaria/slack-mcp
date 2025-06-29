@@ -27,6 +27,7 @@ The bot responds to mentions in Slack channels and provides scholarly responses.
 - `POST /slack/events` - Slack Events API webhook
 - `GET /health` - Health check endpoint
 
+
 ## Prerequisites
 
 - Node.js (v16 or higher)
