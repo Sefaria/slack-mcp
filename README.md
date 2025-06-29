@@ -1,5 +1,6 @@
 # Sefaria Slack MCP Bot
 
+
 A Slack app that integrates Claude LLM with Sefaria's Jewish text database through MCP (Model Context Protocol). 
 The bot responds to mentions in Slack channels and provides scholarly responses.
 
