@@ -391,9 +391,9 @@ export async function handleErrorNode(state: SlackWorkflowState): Promise<Partia
 }
 
 // Helper functions (extracted from existing SlackHandlerImpl)
-function getMessageText(event: SlackMessageEvent): string | null {
-  if (event.text) return event.text;
-  if (event.message && (event.message as any).text) {
+export function getMessageText(event: SlackMessageEvent): string | null {
+  if (event.text !== undefined) return event.text;
+  if (event.message && (event.message as any).text !== undefined) {
     return (event.message as any).text;
   }
   return null;
@@ -632,7 +632,7 @@ ${response}`
   }
 }
 
-function basicSlackFormatConversion(response: string): string {
+export function basicSlackFormatConversion(response: string): string {
   console.log('🔧 [BASIC] Using basic Slack format conversion as fallback...');
   return response
     // Convert HTML links to Slack format

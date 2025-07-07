@@ -38,7 +38,7 @@ export function createSlackWorkflow() {
     .addNode('fetchContext', fetchContextNode)
     .addNode('callClaude', callClaudeNode)
     .addNode('validateSlackFormatting', validateSlackFormattingNode)
-    .addNode('formatResponse', formatResqponseNode)
+    .addNode('formatResponse', formatResponseNode)
     .addNode('sendResponse', sendResponseNode)
     .addNode('handleError', handleErrorNode)
     
