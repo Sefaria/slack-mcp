@@ -61,7 +61,9 @@ Required OAuth scopes:
 - `groups:history`
 - `im:read`
 - `im:history`
+- `im:write`
 - `mpim:read`
+- `mpim-write`
 - `mpim:history`
 - `chat:write`
 - `app_mentions:read`

@@ -17,6 +17,10 @@ export interface SlackWorkflowState {
   // Claude integration
   claudeResponse: string | null;
   
+  // Slack formatting validation
+  needsSlackFormatting: boolean;
+  slackValidatedResponse: string | null;
+  
   // Response formatting
   formattedResponse: string | null;
   

@@ -203,11 +203,66 @@ export async function callClaudeNode(state: SlackWorkflowState): Promise<Partial
   }
 }
 
+export async function validateSlackFormattingNode(state: SlackWorkflowState): Promise<Partial<SlackWorkflowState>> {
+  try {
+    console.log('🔍 [SLACK-FORMAT] Starting Slack formatting validation...');
+    
+    const response = state.claudeResponse || '';
+    console.log('🔍 [SLACK-FORMAT] Input response length:', response.length);
+    console.log('🔍 [SLACK-FORMAT] Input response preview:', response.substring(0, 200));
+    
+    if (!response || response.trim().length === 0) {
+      console.error('🔍 [SLACK-FORMAT] ERROR: No response to validate');
+      return {
+        errorOccurred: true,
+        error: 'No response from Claude to validate formatting'
+      };
+    }
+    
+    // Check if response has HTML links or other non-Slack formatting
+    const hasHtmlLinks = /<a\s+href=["']([^"']+)["'][^>]*>([^<]+)<\/a>/g.test(response);
+    const hasMarkdownHeaders = /^#{1,6}\s+/m.test(response);
+    const hasDoubleAsterisks = /\*\*[^*]+\*\*/g.test(response);
+    
+    console.log('🔍 [SLACK-FORMAT] Format check results:', {
+      hasHtmlLinks,
+      hasMarkdownHeaders,
+      hasDoubleAsterisks
+    });
+    
+    const needsFormatting = hasHtmlLinks || hasMarkdownHeaders || hasDoubleAsterisks;
+    
+    if (needsFormatting) {
+      console.log('🔍 [SLACK-FORMAT] Non-Slack formatting detected, correcting with Claude 3.5 Haiku...');
+      const correctedResponse = await correctSlackFormatting(response);
+      
+      return {
+        needsSlackFormatting: true,
+        slackValidatedResponse: correctedResponse
+      };
+    }
+    
+    console.log('🔍 [SLACK-FORMAT] Response already in correct Slack format');
+    return {
+      needsSlackFormatting: false,
+      slackValidatedResponse: response
+    };
+  } catch (error) {
+    console.error('❌ [SLACK-FORMAT] Slack formatting validation error:', error);
+    console.error('❌ [SLACK-FORMAT] Error stack:', error instanceof Error ? error.stack : 'No stack');
+    return {
+      errorOccurred: true,
+      error: `Slack formatting validation failed: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+}
+
 export async function formatResponseNode(state: SlackWorkflowState): Promise<Partial<SlackWorkflowState>> {
   try {
     console.log('✨ [FORMAT] Starting response formatting...');
     
-    let response = state.claudeResponse || '';
+    // Use the Slack-validated response from the previous node
+    let response = state.slackValidatedResponse || state.claudeResponse || '';
     console.log('✨ [FORMAT] Input response length:', response.length);
     console.log('✨ [FORMAT] Input response preview:', response.substring(0, 200));
     
@@ -511,6 +566,92 @@ function addCoverageWarningIfNeeded(response: string): string {
     return "⚠️ *Limited Coverage*: This topic may not be fully covered in Sefaria's collection.\n\n" + response;
   }
   return response;
+}
+
+async function correctSlackFormatting(response: string): Promise<string> {
+  try {
+    console.log('🛠️ [CORRECTION] Starting Claude 3.5 Haiku formatting correction...');
+    
+    const correctionResponse = await haikuClient.messages.create({
+      model: 'claude-3-5-haiku-20241022',
+      max_tokens: 4000,
+      temperature: 0,
+      messages: [{
+        role: 'user',
+        content: `Convert this response to proper Slack formatting. Follow these rules exactly:
+
+• Bold text: *bold text* (single asterisks only)
+• Italic text: _italic text_ (underscores only)
+• Headers: *Header Text* (bold, no # symbols)
+• Bullets: • Bullet point (use bullet character)
+• Links: <https://www.sefaria.org/Genesis.3.4|Genesis 3:4> (angle brackets with pipe separator)
+• For Sefaria URLs: replace internal spaces with underscores, replace space before verses and verse colons with periods
+• Convert HTML links like <a href="url">text</a> to <url|text>
+• No markdown headers (#, ##, ###) - use *bold* instead
+• No double asterisks (**) - use single asterisks (*)
+• No HTML tags at all
+
+Sefaria Link Formatting Examples:
+• HTML: <a href="https://www.sefaria.org/Midrash_Tanchuma%2C_Bereshit.4.1" target="_blank">Midrash Tanchuma on Bereshit 4:1</a>
+• Slack: <https://www.sefaria.org/Midrash_Tanchuma,_Bereshit.4.1|Midrash Tanchuma on Bereshit 4:1>
+
+• HTML: <a href="https://www.sefaria.org/Rabbeinu_Bahya%2C_Devarim.6.9.2" target="_blank">Rabbeinu Bahya on Deuteronomy 6:9</a>
+• Slack: <https://www.sefaria.org/Rabbeinu_Bahya,_Devarim.6.9.2|Rabbeinu Bahya on Deuteronomy 6:9>
+
+• HTML: <a href="https://www.sefaria.org/Genesis 3:4" target="_blank">Genesis 3:4</a>
+• Slack: <https://www.sefaria.org/Genesis.3.4|Genesis 3:4>
+
+• HTML: <a href="https://www.sefaria.org/Song of Songs 2:15" target="_blank">Song of Songs 2:15</a>
+• Slack: <https://www.sefaria.org/Song_of_Songs.2.15|Song of Songs 2:15>
+
+Key transformations for Sefaria URLs:
+1. Remove URL encoding (%2C becomes ,)
+2. Replace spaces in book names with underscores: "Song of Songs" → "Song_of_Songs"
+3. Replace space before verse numbers with periods: "Genesis 3:4" → "Genesis.3.4"
+4. Replace colons in verse references with periods: "3:4" → "3.4"
+5. Keep commas in commentary names: "Tanchuma, Bereshit" stays as "Tanchuma,_Bereshit"
+
+Response to convert:
+${response}`
+      }]
+    });
+    
+    const correctedText = correctionResponse.content
+      .filter(block => block.type === 'text')
+      .map(block => (block as any).text)
+      .join('');
+    
+    console.log('🛠️ [CORRECTION] Correction completed, length:', correctedText.length);
+    console.log('🛠️ [CORRECTION] Corrected preview:', correctedText.substring(0, 200));
+    
+    return correctedText || response;
+  } catch (error) {
+    console.error('🛠️ [CORRECTION] Error correcting Slack formatting:', error);
+    // Fallback to basic conversion
+    return basicSlackFormatConversion(response);
+  }
+}
+
+function basicSlackFormatConversion(response: string): string {
+  console.log('🔧 [BASIC] Using basic Slack format conversion as fallback...');
+  return response
+    // Convert HTML links to Slack format
+    .replace(/<a\s+href=["']([^"']+)["'][^>]*>([^<]+)<\/a>/g, (match, url, text) => {
+      // Clean up Sefaria URLs specifically
+      if (url.includes('sefaria.org')) {
+        const cleanUrl = url
+          .replace(/%2C/g, ',')  // URL decode commas
+          .replace(/\s+/g, '_')  // Replace spaces with underscores
+          .replace(/(\w)\s+(\d+):(\d+)/g, '$1.$2.$3')  // "Book 3:4" → "Book.3.4"
+          .replace(/:(\d+)/g, '.$1');  // "3:4" → "3.4"
+        return `<${cleanUrl}|${text}>`;
+      }
+      return `<${url}|${text}>`;
+    })
+    // Convert markdown headers to bold
+    .replace(/^#{1,6}\s+(.+)$/gm, '*$1*')
+    // Convert double asterisks to single
+    .replace(/\*\*([^*]+)\*\*/g, '*$1*');
 }
 
 function cleanResponse(response: string): string {

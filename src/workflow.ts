@@ -11,6 +11,8 @@ const SlackStateAnnotation = Annotation.Root({
   conversationContext: Annotation<any[]>,
   messageText: Annotation<string | null>,
   claudeResponse: Annotation<string | null>,
+  needsSlackFormatting: Annotation<boolean>,
+  slackValidatedResponse: Annotation<string | null>,
   formattedResponse: Annotation<string | null>,
   error: Annotation<string | null>,
   errorOccurred: Annotation<boolean>
@@ -22,6 +24,7 @@ import {
   sendAcknowledgmentNode,
   fetchContextNode,
   callClaudeNode,
+  validateSlackFormattingNode,
   formatResponseNode,
   sendResponseNode,
   handleErrorNode
@@ -34,7 +37,8 @@ export function createSlackWorkflow() {
     .addNode('acknowledge', sendAcknowledgmentNode)
     .addNode('fetchContext', fetchContextNode)
     .addNode('callClaude', callClaudeNode)
-    .addNode('formatResponse', formatResponseNode)
+    .addNode('validateSlackFormatting', validateSlackFormattingNode)
+    .addNode('formatResponse', formatResqponseNode)
     .addNode('sendResponse', sendResponseNode)
     .addNode('handleError', handleErrorNode)
     
@@ -57,6 +61,15 @@ export function createSlackWorkflow() {
     // Conditional routing from Claude
     .addConditionalEdges(
       'callClaude',
+      (state) => {
+        if (state.errorOccurred) return 'handleError';
+        return 'validateSlackFormatting';
+      }
+    )
+    
+    // Conditional routing from Slack formatting validation
+    .addConditionalEdges(
+      'validateSlackFormatting',
       (state) => {
         if (state.errorOccurred) return 'handleError';
         return 'formatResponse';
