@@ -15,6 +15,27 @@ The bot responds to mentions in Slack channels and provides scholarly responses.
 
 ## Architecture
 
+### LangGraph Workflow Engine
+
+The application uses **LangGraph** for orchestrating message processing through an 8-node workflow:
+
+**Input**: Slack message event → **LangGraph workflow** → **Output**: Formatted Slack response
+
+#### Workflow Nodes (Sequential):
+1. **validate** - Validates message, checks mentions, determines processing need
+2. **acknowledge** - Sends contextual emoji reaction (🤔, 👀, 🙏, 📜, 📚)
+3. **fetchContext** - Retrieves thread history, builds conversation context
+4. **callClaude** - Calls Claude API with MCP integration for Sefaria access
+5. **validateSlackFormatting** - Checks if response needs formatting fixes
+6. **formatResponse** - Applies final formatting, coverage warnings
+7. **sendResponse** - Posts formatted response to Slack
+8. **handleError** - Handles any errors during processing
+
+#### Key LangGraph Files:
+- **`src/workflow.ts`** - LangGraph StateGraph definition with routing logic
+- **`src/nodes.ts`** - Implementation of all 8 workflow nodes
+- **`src/graph-types.ts`** - TypeScript interfaces for workflow state
+
 ### Core Components
 
 - **`src/app.ts`** - Express server with Slack Events API webhook handling
@@ -35,6 +56,7 @@ The bot responds to mentions in Slack channels and provides scholarly responses.
 - Slack workspace with admin permissions
 - Anthropic API key with MCP beta access
 - Sefaria MCP server running (typically via ngrok tunnel)
+- LangGraph dependencies (@langchain/langgraph, @langchain/core)
 
 ## Installation
 
@@ -84,3 +106,28 @@ npm start
 ```
 
 The service will start on the port specified in your environment variables (default: 3001).
+
+## LangGraph Workflow Details
+
+### State Management
+The workflow uses `SlackWorkflowState` to track:
+- `slackEvent` - Input Slack message event
+- `shouldProcess` - Processing decision flag
+- `acknowledgmentSent` - Emoji reaction status
+- `threadHistory` - Slack conversation context
+- `conversationContext` - Claude API conversation format
+- `claudeResponse` - Raw Claude API response
+- `slackValidatedResponse` - Formatted response for Slack
+- `error` and `errorOccurred` - Error handling state
+
+### Advanced Features
+- **Smart Slack Formatting Pipeline** - Automatic HTML/markdown conversion using Claude Haiku
+- **Dynamic Emoji Selection** - Context-aware emoji reactions based on content analysis
+- **Comprehensive Error Handling** - Graceful degradation with fallback mechanisms
+- **Thread Context Management** - Conversation continuity across message threads
+
+### Testing
+The application includes comprehensive test coverage:
+- **Workflow Integration Tests** - End-to-end workflow validation
+- **Node-Level Tests** - Individual node function testing
+- **Service Integration Tests** - API integration and error handling

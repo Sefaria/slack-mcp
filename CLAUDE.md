@@ -24,11 +24,43 @@ npm install
 
 ## Core Architecture
 
-### 4-File MVP Structure
-The application follows a simple 4-file architecture:
+### LangGraph Workflow Engine
+The application uses **LangGraph** for orchestrating message processing through an 8-node workflow:
 
-1. **`src/app.ts`** - Express server with Slack Events API webhook handling
-2. **`src/slack-handler.ts`** - Message processing with mention detection and thread management
+**Input**: Slack message event → **LangGraph workflow** → **Output**: Formatted Slack response
+
+#### Workflow Nodes (Sequential):
+1. **validate** - Validates message, checks mentions, determines processing need
+2. **acknowledge** - Sends contextual emoji reaction (🤔, 👀, 🙏, 📜, 📚)
+3. **fetchContext** - Retrieves thread history, builds conversation context
+4. **callClaude** - Calls Claude API with MCP integration for Sefaria access
+5. **validateSlackFormatting** - Checks if response needs formatting fixes
+6. **formatResponse** - Applies final formatting, coverage warnings
+7. **sendResponse** - Posts formatted response to Slack
+8. **handleError** - Handles any errors during processing
+
+#### Key LangGraph Files:
+- **`src/workflow.ts`** - LangGraph StateGraph definition with routing logic
+- **`src/nodes.ts`** - Implementation of all 8 workflow nodes
+- **`src/graph-types.ts`** - TypeScript interfaces for workflow state
+
+#### State Management:
+The workflow uses `SlackWorkflowState` to track:
+- `slackEvent` - Input Slack message event
+- `shouldProcess` - Processing decision flag
+- `acknowledgmentSent` - Emoji reaction status
+- `threadHistory` - Slack conversation context
+- `conversationContext` - Claude API conversation format
+- `claudeResponse` - Raw Claude API response
+- `needsSlackFormatting` - Formatting requirement flag
+- `slackValidatedResponse` - Formatted response for Slack
+- `formattedResponse` - Final cleaned response
+- `error` and `errorOccurred` - Error handling state
+
+### Core Components
+
+1. **`src/app.ts`** - Express server with Slack Events API webhook handling and LangGraph workflow initialization
+2. **`src/slack-handler.ts`** - Fallback message processing (used when LangGraph workflow fails)
 3. **`src/claude-service.ts`** - Claude API integration with MCP connector
 4. **`src/types.ts`** - TypeScript interfaces for all components
 
@@ -36,6 +68,8 @@ The application follows a simple 4-file architecture:
 - **Express v4.21.2** (v5 has TypeScript compatibility issues)
 - **@slack/web-api** for Slack integration
 - **@anthropic-ai/sdk** for Claude API
+- **@langchain/langgraph** for workflow orchestration
+- **@langchain/core** for LangGraph annotations and utilities
 - **MCP Integration** via Claude Messages API with `anthropic-beta: mcp-client-2025-04-04` header
 
 ### API Endpoints
@@ -73,22 +107,55 @@ Event subscriptions needed for: `message.channels`, `message.groups`, `message.i
 
 ## Technical Implementation Details
 
-### Enhanced Message Processing Flow
-1. **Attack Detection**: First checks for disingenuous/attack questions using pattern matching
-2. **Attack Response**: Reacts with 😞 emoji and sends polite refusal with guidance for better questions
-3. **Initial messages**: App responds to messages where it's mentioned (@app-name)
-4. **Follow-up messages**: App automatically processes subsequent messages in threads where it has participated
-5. **Smart acknowledgment**: Uses context-aware emoji reactions:
-   - 🤔 (default thinking)
-   - 👀 (urgent/important questions)
-   - 🙏 (polite requests with "please"/"thank you")
-   - 📜 (Hebrew/Aramaic text questions)
-   - 📚 (Talmudic questions)
-6. **User intent analysis**: Analyzes question type to determine appropriate response depth
-7. **Thread context**: Reads thread history (limited to 5 messages) with intent metadata
-8. **Response validation**: Checks for Sefaria coverage limitations and adds warnings
-9. **Language detection**: Ensures response matches user's language
-10. **Response delivery**: Sends formatted, validated response with proper citations
+### LangGraph Workflow Processing
+The application processes messages through an 8-node LangGraph workflow:
+
+1. **validate** (`src/nodes.ts:validateNode`)
+   - Validates message structure and content
+   - Checks for mentions and determines processing need
+   - Detects attack patterns and prompt injections
+   - Sets `shouldProcess` flag in workflow state
+
+2. **acknowledge** (`src/nodes.ts:acknowledgeNode`)
+   - Sends contextual emoji reaction using Claude Haiku
+   - Dynamic emoji selection based on content analysis:
+     - 🤔 (default thinking)
+     - 👀 (urgent/important questions)
+     - 🙏 (polite requests with "please"/"thank you")
+     - 📜 (Hebrew/Aramaic text questions)
+     - 📚 (Talmudic questions)
+   - Handles attack responses with 😞 emoji and polite guidance
+
+3. **fetchContext** (`src/nodes.ts:fetchContextNode`)
+   - Retrieves thread history (limited to 5 messages)
+   - Builds conversation context for Claude API
+   - Preserves thread continuity and context
+
+4. **callClaude** (`src/nodes.ts:callClaudeNode`)
+   - Calls Claude API with MCP integration for Sefaria access
+   - Includes user intent analysis and language detection
+   - Applies scholarly response guidelines and citation requirements
+
+5. **validateSlackFormatting** (`src/nodes.ts:validateSlackFormattingNode`)
+   - Checks for HTML links and markdown formatting issues
+   - Determines if response needs formatting correction
+   - Sets `needsSlackFormatting` flag for conditional routing
+
+6. **formatResponse** (`src/nodes.ts:formatResponseNode`)
+   - Applies Slack-compatible formatting using Claude Haiku
+   - Converts markdown headers and links to Slack format
+   - Adds coverage warnings for topics outside Jewish sources
+   - Handles Sefaria URL encoding (spaces→underscores, verse references)
+
+7. **sendResponse** (`src/nodes.ts:sendResponseNode`)
+   - Posts formatted response to Slack
+   - Handles thread replies and channel messages
+   - Includes proper error handling and retry logic
+
+8. **handleError** (`src/nodes.ts:handleErrorNode`)
+   - Processes any errors that occur during workflow execution
+   - Provides graceful error messages to users
+   - Logs errors for debugging and monitoring
 
 ### MCP Integration
 Uses Claude Messages API MCP connector with:
@@ -172,28 +239,31 @@ The app requires external services to function:
 - **Context preservation**: Thread history includes all relevant messages while filtering out acknowledgment reactions
 - **Smart acknowledgment**: Uses context-aware emoji reactions based on question type and content
 
-### Common Development Tasks
+### LangGraph Workflow Development
 
-#### Response System Modifications
-- **Attack Detection**: Update patterns in `isAttackQuestion()` method
-- **Intent Analysis**: Modify `analyzeUserIntent()` for new question types
-- **Coverage Assessment**: Update `checkSefariaCoverage()` validation logic
-- **Emoji Reactions**: Adjust `getAcknowledgmentEmoji()` for new contexts
+#### Workflow Node Modifications
+- **validate Node**: Update attack detection patterns in `src/nodes.ts:validateNode`
+- **acknowledge Node**: Modify emoji selection logic in `src/nodes.ts:acknowledgeNode`
+- **fetchContext Node**: Adjust thread history limits in `src/nodes.ts:fetchContextNode`
+- **callClaude Node**: Update Claude API integration in `src/nodes.ts:callClaudeNode`
+- **validateSlackFormatting Node**: Modify formatting validation in `src/nodes.ts:validateSlackFormattingNode`
+- **formatResponse Node**: Update Slack formatting logic in `src/nodes.ts:formatResponseNode`
+- **sendResponse Node**: Modify Slack posting logic in `src/nodes.ts:sendResponseNode`
+- **handleError Node**: Update error handling in `src/nodes.ts:handleErrorNode`
 
-#### System Prompt Updates
-- **Claude Service**: Modify system prompt in `claude-service.ts` for response guidelines
-- **Language Instructions**: Update multilingual response requirements
-- **Citation Requirements**: Adjust source citation and disclaimer formatting
+#### Workflow State Management
+- **State Schema**: Modify `SlackWorkflowState` interface in `src/graph-types.ts`
+- **Routing Logic**: Update conditional routing in `src/workflow.ts`
+- **State Transitions**: Adjust state updates in individual node functions
 
-#### Validation and Quality Control
-- **Response Validation**: Test `validateResponse()` method for coverage warnings
-- **Message Formatting**: Verify `cleanResponse()` handles all markdown conversions
-- **Thread Handling**: Ensure `shouldProcessMessage()` and `hasBotParticipatedInThread()` work correctly
-- **Language Detection**: Validate `detectLanguage()` accuracy for different scripts
+#### System Integration
+- **Workflow Initialization**: Update workflow setup in `src/app.ts`
+- **Fallback Handler**: Modify fallback logic in `src/slack-handler.ts` (used when LangGraph fails)
+- **Service Integration**: Update Claude service integration in workflow nodes
 
-#### Testing Scenarios
-- **Attack Questions**: Test various prompt injection and jailbreak attempts
-- **Coverage Edge Cases**: Verify warnings for non-Jewish topics and contemporary issues  
-- **Multilingual Responses**: Test Hebrew, Arabic, and English question handling
-- **Intent Recognition**: Validate response depth matching for different question types
-- **Citation Formatting**: Ensure all Sefaria links convert properly to Slack format
+#### Testing LangGraph Workflows
+- **Workflow Integration Tests**: End-to-end workflow validation (`src/__tests__/integration/workflow-integration.test.ts`)
+- **Node-Level Tests**: Individual node function testing (`src/__tests__/integration/workflow-nodes.test.ts`)
+- **Service Integration Tests**: API integration testing (`src/__tests__/integration/service-integration.test.ts`)
+- **State Management Tests**: Workflow state transition validation
+- **Error Handling Tests**: Workflow error scenarios and recovery
