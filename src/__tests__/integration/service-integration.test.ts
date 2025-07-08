@@ -140,8 +140,11 @@ describe('Service Integration Tests', () => {
       // @ts-ignore
       const mockClaude = jest.fn().mockRejectedValue(new Error('Claude unavailable'));
       
+      // Mock console.error to suppress the log output during test
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      
       // Should still complete without crashing
-      expect(async () => {
+      const testFunction = async () => {
         try {
           await mockClaude();
         } catch (e) {
@@ -156,7 +159,13 @@ describe('Service Integration Tests', () => {
             console.error('All services failed');
           }
         }
-      }).not.toThrow();
+      };
+      
+      await expect(testFunction()).resolves.not.toThrow();
+      
+      // Verify console.error was called
+      expect(consoleSpy).toHaveBeenCalledWith('All services failed');
+      consoleSpy.mockRestore();
     });
 
     test('handles partial service recovery', async () => {
