@@ -6,6 +6,8 @@
     "build": "tsc",
     "start": "node dist/app.js",
     "dev": "nodemon --exec ts-node src/app.ts",
+    "cli": "ts-node src/cli.ts",
+    "cli:built": "node dist/cli.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",

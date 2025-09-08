@@ -10,6 +10,7 @@ let slackClient: WebClient;
 let claudeService: ClaudeServiceImpl;
 let botUserId: string = '';
 let haikuClient: Anthropic;
+let isCLIMode: boolean = false;
 
 export function initializeServices(
   slackToken: string, 
@@ -27,6 +28,23 @@ export function initializeServices(
   }).catch(error => {
     console.error('Failed to get bot user ID:', error);
   });
+}
+
+// CLI-specific initialization that sets a mock bot user ID
+export function initializeServicesForCLI(
+  botName: string,
+  anthropicKey: string, 
+  mcpUrl: string
+) {
+  // Use a mock WebClient for CLI mode (won't actually call Slack API)
+  slackClient = new WebClient('mock-token');
+  claudeService = new ClaudeServiceImpl(anthropicKey, mcpUrl);
+  haikuClient = new Anthropic({ apiKey: anthropicKey });
+  
+  // Set CLI mode flag and predictable bot user ID
+  isCLIMode = true;
+  botUserId = `U${botName.toUpperCase()}123456`;
+  console.log(`🤖 Bot user ID set for CLI: ${botUserId}`);
 }
 
 export async function validateMessageNode(state: SlackWorkflowState): Promise<Partial<SlackWorkflowState>> {
@@ -77,16 +95,22 @@ export async function sendAcknowledgmentNode(state: SlackWorkflowState): Promise
     const emoji = await getAcknowledgmentEmoji(state.messageText || '');
     console.log('👍 [ACK] getAcknowledgmentEmoji returned:', emoji);
     console.log('👍 [ACK] Selected emoji:', emoji);
-    console.log('👍 [ACK] Adding reaction to channel:', state.slackEvent.channel, 'ts:', state.slackEvent.ts);
-    
-    const reaction = await slackClient.reactions.add({
-      channel: state.slackEvent.channel,
-      timestamp: state.slackEvent.ts,
-      name: emoji
-    });
-    
-    console.log('👍 [ACK] Reaction response:', reaction);
-    console.log('👍 [ACK] Acknowledgment sent successfully');
+    // Skip actual Slack API call in CLI mode
+    if (isCLIMode) {
+      console.log('👍 [ACK] CLI mode: Skipping Slack emoji reaction, would add:', emoji);
+      console.log('👍 [ACK] Acknowledgment completed successfully');
+    } else {
+      console.log('👍 [ACK] Adding reaction to channel:', state.slackEvent.channel, 'ts:', state.slackEvent.ts);
+      
+      const reaction = await slackClient.reactions.add({
+        channel: state.slackEvent.channel,
+        timestamp: state.slackEvent.ts,
+        name: emoji
+      });
+      
+      console.log('👍 [ACK] Reaction response:', reaction);
+      console.log('👍 [ACK] Acknowledgment sent successfully');
+    }
     
     return {
       acknowledgmentSent: true
@@ -131,8 +155,20 @@ export async function fetchContextNode(state: SlackWorkflowState): Promise<Parti
     });
     
     // Build conversation context
-    const conversationContext = buildConversationContext(threadHistory);
+    let conversationContext = buildConversationContext(threadHistory);
     console.log('📚 [CONTEXT] Conversation context built:', conversationContext.length, 'messages');
+    
+    // In CLI mode, if no context, create a simple user message from the current message
+    if (isCLIMode && conversationContext.length === 0 && state.messageText) {
+      // Extract the actual message without the bot mention
+      const cleanMessage = state.messageText.replace(/<@[A-Z0-9]+>/g, '').trim();
+      conversationContext = [{
+        role: 'user',
+        content: cleanMessage
+      }];
+      console.log('📚 [CONTEXT] CLI mode: Created user message from current text:', cleanMessage);
+    }
+    
     conversationContext.forEach((msg, i) => {
       console.log(`📚 [CONTEXT] Conversation ${i}:`, {
         role: msg.role,
@@ -313,6 +349,13 @@ export async function sendResponseNode(state: SlackWorkflowState): Promise<Parti
     
     if (!state.formattedResponse) {
       console.warn('📤 [SEND] WARNING: Using fallback message - no formatted response available');
+    }
+    
+    // Skip actual Slack API call in CLI mode, just display the response
+    if (isCLIMode) {
+      console.log('📤 [SEND] CLI mode: Displaying response instead of posting to Slack');
+      console.log('📤 [SEND] Response completed successfully');
+      return {};
     }
     
     console.log('📤 [SEND] Posting message to Slack...');
@@ -498,6 +541,12 @@ function isValidEmoji(emojiName: string): boolean {
 
 async function getThreadHistory(channel: string, threadTs: string, currentEvent?: SlackMessageEvent) {
   try {
+    // In CLI mode, return empty history since we can't make Slack API calls
+    if (isCLIMode) {
+      console.log('📚 [THREAD] CLI mode: Returning empty thread history');
+      return [];
+    }
+    
     const result = await slackClient.conversations.replies({
       channel,
       ts: threadTs,
