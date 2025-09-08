@@ -4,7 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Slack app that integrates Claude LLM with Sefaria's Jewish text database through MCP (Model Context Protocol). The app responds to mentions in Slack channels and provides scholarly responses about Jewish texts using Claude's API with MCP server access.
+This is a multi-bot Slack platform that integrates Claude LLM with Sefaria's Jewish text database through MCP (Model Context Protocol). The platform hosts multiple specialized bots that respond to mentions in Slack channels and provide scholarly responses about Jewish texts using Claude's API with MCP server access.
+
+### Multi-Bot Architecture
+The platform supports multiple bots with different personalities and specializations:
+- **Bina** (בינה) - Main scholarly assistant for general Jewish text inquiries
+- **Binah** (בינה) - Deep research variant for comprehensive analysis (planned)
+- Each bot has its own Slack webhook endpoint but shares common infrastructure (Claude API, MCP connector)
 
 ## Development Commands
 
@@ -40,7 +46,9 @@ The application uses **LangGraph** for orchestrating message processing through 
 8. **handleError** - Handles any errors during processing
 
 #### Key LangGraph Files:
-- **`src/workflow.ts`** - LangGraph StateGraph definition with routing logic
+- **`src/workflows/workflow-base.ts`** - Base workflow template shared by all bots
+- **`src/workflows/bina-workflow.ts`** - Bina bot-specific workflow implementation
+- **`src/workflow.ts`** - Legacy file (deprecated, kept for backward compatibility)
 - **`src/nodes.ts`** - Implementation of all 8 workflow nodes
 - **`src/graph-types.ts`** - TypeScript interfaces for workflow state
 
@@ -57,12 +65,14 @@ The workflow uses `SlackWorkflowState` to track:
 - `formattedResponse` - Final cleaned response
 - `error` and `errorOccurred` - Error handling state
 
-### Core Components
+### Multi-Bot Core Components
 
-1. **`src/app.ts`** - Express server with Slack Events API webhook handling and LangGraph workflow initialization
-2. **`src/slack-handler.ts`** - Fallback message processing (used when LangGraph workflow fails)
-3. **`src/claude-service.ts`** - Claude API integration with MCP connector
-4. **`src/types.ts`** - TypeScript interfaces for all components
+1. **`src/app.ts`** - Express server with dynamic multi-bot routing and LangGraph workflow initialization
+2. **`src/bot-registry.ts`** - Bot discovery, registration, and management system
+3. **`src/workflows/`** - Directory containing bot-specific workflow implementations
+4. **`src/slack-handler.ts`** - Fallback message processing (legacy compatibility, used when LangGraph workflow fails)
+5. **`src/claude-service.ts`** - Shared Claude API integration with MCP connector
+6. **`src/types.ts`** - TypeScript interfaces for all components
 
 ### Key Dependencies
 - **Express v4.21.2** (v5 has TypeScript compatibility issues)
@@ -72,20 +82,55 @@ The workflow uses `SlackWorkflowState` to track:
 - **@langchain/core** for LangGraph annotations and utilities
 - **MCP Integration** via Claude Messages API with `anthropic-beta: mcp-client-2025-04-04` header
 
-### API Endpoints
-- `POST /slack/events` - Slack Events API webhook
-- `GET /health` - Health check endpoint
+### Multi-Bot API Endpoints
+- `POST /slack/events` - Default webhook (routes to "bina" for backward compatibility)
+- `POST /slack/events/:botName` - Bot-specific webhook endpoints
+  - `POST /slack/events/bina` - Bina bot endpoint
+  - `POST /slack/events/binah` - Binah bot endpoint (when configured)
+- `GET /health` - Health check endpoint with bot registry status
 
-## Configuration
+## Multi-Bot Configuration
 
-### Required Environment Variables
+### Environment Variable Patterns
+
+#### Option 1: Multi-Bot Configuration (Recommended)
 ```bash
+# Shared configuration (required for all bots)
+ANTHROPIC_API_KEY=your-anthropic-key
+SEFARIA_MCP_URL=https://your-ngrok-url.ngrok-free.app
+PORT=3001
+
+# Bot-specific configurations (pattern: BOTNAME_SLACK_TOKEN, BOTNAME_SIGNING_SECRET)
+BINA_SLACK_TOKEN=xoxb-your-bina-bot-token
+BINA_SIGNING_SECRET=your-bina-signing-secret
+
+BINAH_SLACK_TOKEN=xoxb-your-binah-bot-token
+BINAH_SIGNING_SECRET=your-binah-signing-secret
+```
+
+#### Option 2: Legacy Single-Bot Configuration (Backward Compatibility)
+```bash
+# This configuration will be automatically registered as the "bina" bot
 SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_SIGNING_SECRET=your-signing-secret
 ANTHROPIC_API_KEY=your-anthropic-key
 SEFARIA_MCP_URL=https://your-ngrok-url.ngrok-free.app
 PORT=3001
 ```
+
+### Bot Discovery and Registration
+The system automatically discovers bots based on environment variable patterns:
+1. **Auto-discovery**: Scans for `BOTNAME_SLACK_TOKEN` environment variables
+2. **Auto-registration**: Registers found bots in the bot registry
+3. **Workflow assignment**: Maps bots to their specific workflow implementations
+4. **Route creation**: Creates dynamic routes for each registered bot
+
+### Adding New Bots
+To add a new bot (no code changes required):
+1. Add `NEWBOT_SLACK_TOKEN` and `NEWBOT_SIGNING_SECRET` environment variables
+2. Optionally create `src/workflows/newbot-workflow.ts` for custom behavior
+3. Configure Slack webhook URL: `https://your-domain.com/slack/events/newbot`
+4. Restart the application - the bot will be automatically discovered and registered
 
 ### Slack App Configuration
 Required OAuth scopes:
@@ -239,31 +284,78 @@ The app requires external services to function:
 - **Context preservation**: Thread history includes all relevant messages while filtering out acknowledgment reactions
 - **Smart acknowledgment**: Uses context-aware emoji reactions based on question type and content
 
-### LangGraph Workflow Development
+### Multi-Bot LangGraph Workflow Development
 
-#### Workflow Node Modifications
-- **validate Node**: Update attack detection patterns in `src/nodes.ts:validateNode`
-- **acknowledge Node**: Modify emoji selection logic in `src/nodes.ts:acknowledgeNode`
-- **fetchContext Node**: Adjust thread history limits in `src/nodes.ts:fetchContextNode`
-- **callClaude Node**: Update Claude API integration in `src/nodes.ts:callClaudeNode`
-- **validateSlackFormatting Node**: Modify formatting validation in `src/nodes.ts:validateSlackFormattingNode`
-- **formatResponse Node**: Update Slack formatting logic in `src/nodes.ts:formatResponseNode`
-- **sendResponse Node**: Modify Slack posting logic in `src/nodes.ts:sendResponseNode`
-- **handleError Node**: Update error handling in `src/nodes.ts:handleErrorNode`
+#### Bot-Specific Workflow Creation
+To create a new bot with custom workflow behavior:
 
-#### Workflow State Management
-- **State Schema**: Modify `SlackWorkflowState` interface in `src/graph-types.ts`
-- **Routing Logic**: Update conditional routing in `src/workflow.ts`
-- **State Transitions**: Adjust state updates in individual node functions
+1. **Create Bot Workflow File**: `src/workflows/yourbot-workflow.ts`
+```typescript
+import { createBaseWorkflow, WorkflowNodes } from './workflow-base';
+import {
+  validateMessageNode,
+  sendAcknowledgmentNode,
+  fetchContextNode,
+  callClaudeNode,
+  validateSlackFormattingNode,
+  formatResponseNode,
+  sendResponseNode,
+  handleErrorNode
+} from '../nodes';
 
-#### System Integration
-- **Workflow Initialization**: Update workflow setup in `src/app.ts`
-- **Fallback Handler**: Modify fallback logic in `src/slack-handler.ts` (used when LangGraph fails)
-- **Service Integration**: Update Claude service integration in workflow nodes
+// Custom nodes for your bot (can override any base behavior)
+const yourbotNodes: WorkflowNodes = {
+  validateMessageNode,
+  sendAcknowledgmentNode,
+  fetchContextNode,
+  callClaudeNode: customCallClaudeNode, // Custom implementation
+  validateSlackFormattingNode,
+  formatResponseNode,
+  sendResponseNode,
+  handleErrorNode
+};
 
-#### Testing LangGraph Workflows
-- **Workflow Integration Tests**: End-to-end workflow validation (`src/__tests__/integration/workflow-integration.test.ts`)
-- **Node-Level Tests**: Individual node function testing (`src/__tests__/integration/workflow-nodes.test.ts`)
-- **Service Integration Tests**: API integration testing (`src/__tests__/integration/service-integration.test.ts`)
-- **State Management Tests**: Workflow state transition validation
-- **Error Handling Tests**: Workflow error scenarios and recovery
+export function createYourbotWorkflow() {
+  console.log('🤖 Creating Yourbot workflow...');
+  return createBaseWorkflow(yourbotNodes);
+}
+```
+
+2. **Update Workflow Factory**: Modify `getWorkflowFactory()` in `src/app.ts`
+```typescript
+private getWorkflowFactory(botName: string): () => any {
+  switch (botName) {
+    case 'bina':
+      return createBinaWorkflow;
+    case 'binah':
+      return createBinahWorkflow;
+    case 'yourbot':
+      return createYourbotWorkflow;
+    default:
+      return createBinaWorkflow;
+  }
+}
+```
+
+#### Shared Workflow Node Modifications
+- **Base Nodes**: All common behavior is in `src/nodes.ts` (shared across all bots)
+- **Bot-Specific Overrides**: Individual bots can override specific nodes with custom implementations
+- **Workflow Base**: Shared workflow structure in `src/workflows/workflow-base.ts`
+
+#### Multi-Bot State Management
+- **Shared State Schema**: `SlackWorkflowState` interface in `src/graph-types.ts` (used by all bots)
+- **Bot-Specific Routing**: Each bot can have different conditional routing logic
+- **Shared Infrastructure**: Common services (Slack, Claude API) shared across all bot workflows
+
+#### Multi-Bot System Integration
+- **Bot Registry**: Bot discovery and registration system in `src/bot-registry.ts`
+- **Dynamic Routing**: Request routing to appropriate bot workflow in `src/app.ts`
+- **Shared Services**: Claude service and MCP connector shared across all bots
+- **Fallback Handler**: Legacy compatibility handler in `src/slack-handler.ts`
+
+#### Testing Multi-Bot LangGraph Workflows
+- **Bot-Specific Workflow Tests**: Test individual bot workflow implementations
+- **Shared Node Tests**: Test common workflow nodes (`src/__tests__/integration/workflow-nodes.test.ts`)
+- **Multi-Bot Integration Tests**: Test bot registry and routing system
+- **Service Integration Tests**: Test shared services across multiple bots (`src/__tests__/integration/service-integration.test.ts`)
+- **Error Handling Tests**: Test workflow error scenarios for all bot types

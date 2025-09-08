@@ -162,7 +162,7 @@ export class SlackHandlerImpl implements SlackHandler {
   private getAcknowledgmentEmoji(text: string): string {
     // Simple logic - let Claude handle the nuanced responses
     if (/[\u0590-\u05FF]/.test(text)) {
-      return 'scroll'; // 📜 for Hebrew text
+      return 'books'; // 📚 for Hebrew text
     }
     
     return 'thinking_face'; // 🤔 default

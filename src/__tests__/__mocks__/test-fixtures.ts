@@ -67,7 +67,7 @@ export const sefariaUrlTestCases = [
 export const emojiTestCases = [
   {
     text: 'שבת שלום',
-    expectedFallback: 'scroll'
+    expectedFallback: 'books'
   },
   {
     text: 'What is the meaning of life?',

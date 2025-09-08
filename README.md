@@ -1,17 +1,26 @@
-# Sefaria Slack MCP Bot
+# Sefaria Slack MCP Multi-Bot Platform
 
-
-A Slack app that integrates Claude LLM with Sefaria's Jewish text database through MCP (Model Context Protocol). 
-The bot responds to mentions in Slack channels and provides scholarly responses.
+A multi-bot Slack platform that integrates Claude LLM with Sefaria's Jewish text database through MCP (Model Context Protocol). The platform supports multiple specialized bots, each with their own personality and capabilities, all sharing common infrastructure.
 
 ## Features
 
+### Multi-Bot Architecture
+- **Dynamic Bot Routing**: Deploy multiple bots with different specializations
+- **Shared Infrastructure**: Common services (Claude API, MCP) shared across all bots
+- **Bot Registry System**: Automatic bot discovery and registration
+- **Scalable Design**: Easy addition of new bots without code changes
+
+### Bot Capabilities
 - **Smart Message Processing**: Responds to @mentions and follows thread conversations
 - **Scholarly Responses**: Provides comprehensive answers about Jewish texts with proper citations
 - **Attack Detection**: Identifies and gracefully handles disingenuous or malicious questions
 - **Multilingual Support**: Responds based on user's language
 - **Source Validation**: All responses include Sefaria citations with proper link formatting
 - **Coverage Warnings**: Alerts users when topics fall outside Jewish textual sources
+
+### Current Bots
+- **Bina** (בינה): Main scholarly assistant for general Jewish text inquiries
+- **Binah** (בינה): Deep research variant for comprehensive analysis (planned)
 
 ## Architecture
 
@@ -32,21 +41,29 @@ The application uses **LangGraph** for orchestrating message processing through 
 8. **handleError** - Handles any errors during processing
 
 #### Key LangGraph Files:
-- **`src/workflow.ts`** - LangGraph StateGraph definition with routing logic
+- **`src/workflows/workflow-base.ts`** - Base workflow template shared by all bots
+- **`src/workflows/bina-workflow.ts`** - Bina bot-specific workflow implementation
 - **`src/nodes.ts`** - Implementation of all 8 workflow nodes
 - **`src/graph-types.ts`** - TypeScript interfaces for workflow state
 
-### Core Components
+### Multi-Bot Architecture Components
 
-- **`src/app.ts`** - Express server with Slack Events API webhook handling
-- **`src/slack-handler.ts`** - Message processing with mention detection and thread management
-- **`src/claude-service.ts`** - Claude API integration with MCP connector
+- **`src/app.ts`** - Express server with dynamic multi-bot routing
+- **`src/bot-registry.ts`** - Bot discovery, registration, and management system
+- **`src/workflows/`** - Bot-specific workflow implementations
+- **`src/slack-handler.ts`** - Fallback message processing (legacy compatibility)
+- **`src/claude-service.ts`** - Shared Claude API integration with MCP connector
 - **`src/types.ts`** - TypeScript interfaces for all components
 
 ### API Endpoints
 
-- `POST /slack/events` - Slack Events API webhook
-- `GET /health` - Health check endpoint
+- `POST /slack/events` - Default webhook (routes to "bina" for backward compatibility)
+- `POST /slack/events/:botName` - Bot-specific webhook endpoints
+- `GET /health` - Health check endpoint with bot registry status
+
+**Available Bot Routes:**
+- `POST /slack/events/bina` - Bina bot endpoint
+- `POST /slack/events/binah` - Binah bot endpoint (when configured)
 
 
 ## Prerequisites
@@ -80,17 +97,53 @@ npm run build
 
 ## Configuration
 
-### Environment Variables
+### Multi-Bot Environment Variables
 
-Create a `.env` file in the root directory:
+The platform supports two configuration modes:
+
+#### Option 1: Multi-Bot Configuration (Recommended)
+Create a `.env` file with bot-specific configurations:
 
 ```bash
+# Shared configuration (required)
+ANTHROPIC_API_KEY=your-anthropic-api-key
+SEFARIA_MCP_URL=https://your-ngrok-url.ngrok-free.app
+PORT=3001
+
+# Bot-specific configurations
+# Pattern: BOTNAME_SLACK_TOKEN and BOTNAME_SIGNING_SECRET
+
+# Bina bot (main scholarly assistant)
+BINA_SLACK_TOKEN=xoxb-your-bina-bot-token
+BINA_SIGNING_SECRET=your-bina-signing-secret
+
+# Binah bot (deep research variant)
+BINAH_SLACK_TOKEN=xoxb-your-binah-bot-token
+BINAH_SIGNING_SECRET=your-binah-signing-secret
+```
+
+#### Option 2: Legacy Single-Bot Configuration
+For backward compatibility, you can still use the original single-bot format:
+
+```bash
+# This will automatically be registered as the "bina" bot
 SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_SIGNING_SECRET=your-signing-secret
 ANTHROPIC_API_KEY=your-anthropic-key
 SEFARIA_MCP_URL=https://your-ngrok-url.ngrok-free.app
 PORT=3001
 ```
+
+### Adding New Bots
+
+To add a new bot:
+
+1. **Add Environment Variables**: Follow the `BOTNAME_SLACK_TOKEN` and `BOTNAME_SIGNING_SECRET` pattern
+2. **Create Workflow** (Optional): Add a new workflow in `src/workflows/yourbot-workflow.ts`
+3. **Update Bot Registry**: The bot will be automatically discovered and registered
+4. **Slack Webhook**: Configure your Slack app to use `https://your-domain.com/slack/events/yourbot`
+
+The system automatically discovers bots based on environment variable patterns - no code changes needed!
 
 ## Running the Service
 
@@ -106,6 +159,26 @@ npm start
 ```
 
 The service will start on the port specified in your environment variables (default: 3001).
+
+### Multi-Bot Status
+
+Check bot registration status:
+```bash
+curl http://localhost:3001/health
+```
+
+This will return information about registered bots:
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "bots": [
+    {"name": "bina", "description": null},
+    {"name": "binah", "description": null}
+  ],
+  "botCount": 2
+}
+```
 
 ## LangGraph Workflow Details
 

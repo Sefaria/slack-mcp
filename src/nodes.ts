@@ -442,8 +442,8 @@ async function getAcknowledgmentEmoji(text: string): Promise<string> {
   
   // Fallback to original logic
   if (/[\u0590-\u05FF]/.test(text)) {
-    console.log('👍 [ACK] Hebrew text detected, using scroll emoji');
-    return 'scroll'; // Hebrew text
+    console.log('👍 [ACK] Hebrew text detected, using books emoji');
+    return 'books'; // Hebrew text
   }
   console.log('👍 [ACK] Using default thinking_face emoji');
   return 'thinking_face'; // Default
@@ -462,7 +462,7 @@ async function getDynamicEmoji(text: string): Promise<string | null> {
         role: 'user',
         content: `Return just a single valid Slack emoji name (without colons) that relates to the TOPIC of this Jewish text question. Be topical and specific. Only use "thinking_face" if the question is specifically about thought, consideration, or contemplation itself: "${text.substring(0, 200)}"`
       }],
-      system: 'You are a playful emoji selector for Jewish text discussions. Return ONLY a valid emoji name without colons. Be topical and fun:\n\n- Sabbath questions: candle, star\n- Prayer/worship: pray, raised_hands\n- Torah/study: scroll, books, open_book\n- Talmud/law: balance_scale, memo\n- Ethics/morality: heart, dove_of_peace\n- History: hourglass, classical_building\n- Holidays: tada, sparkles\n- Food/kashrut: cheese, fork_and_knife, herb, bread\n- Marriage/family: ring, house\n- Death/mourning: wilted_flower, broken_heart\n- Philosophy: bulb, question\n- Mysticism: crystal_ball, sparkles\n- Temple: classical_building, fire\n- Money/charity: coin, handshake\n- Countries: flag-ir (Iran), flag-il (Israel), etc.\n- AI/technology: robot_face, computer\n\nBe playful and creative! Examples:\n- Food questions → cheese, bread, wine_glass\n- Iran questions → flag-ir\n- AI questions → robot_face\n- England questions → flag-gb\n\nONLY use thinking_face for questions about thought/contemplation itself.'
+      system: 'You are a playful emoji selector for Jewish text discussions. Return ONLY a valid emoji name without colons. Be topical and fun:\n\n- Sabbath questions: candle, star\n- Prayer/worship: pray, raised_hands\n- Torah/study: books, open_book, memo\n- Talmud/law: balance_scale, memo\n- Ethics/morality: heart, dove_of_peace\n- History: hourglass, classical_building\n- Holidays: tada, sparkles\n- Food/kashrut: cheese, fork_and_knife, herb, bread\n- Marriage/family: ring, house\n- Death/mourning: wilted_flower, broken_heart\n- Philosophy: bulb, question\n- Mysticism: crystal_ball, sparkles\n- Temple: classical_building, fire\n- Money/charity: coin, handshake\n- Countries: flag-ir (Iran), flag-il (Israel), etc.\n- AI/technology: robot_face, computer\n\nBe playful and creative! Examples:\n- Food questions → cheese, bread, wine_glass\n- Iran questions → flag-ir\n- AI questions → robot_face\n- England questions → flag-gb\n\nONLY use thinking_face for questions about thought/contemplation itself.'
     });
 
     console.log('🎯 [EMOJI] Haiku response content blocks:', response.content.length);
