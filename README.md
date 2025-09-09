@@ -2,6 +2,7 @@
 
 A multi-bot Slack platform that integrates Claude LLM with Sefaria's Jewish text database through MCP (Model Context Protocol). The platform supports multiple specialized bots, each with their own personality and capabilities, all sharing common infrastructure.
 
+
 ## Features
 
 ### Multi-Bot Architecture
