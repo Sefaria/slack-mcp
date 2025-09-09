@@ -62,6 +62,29 @@ export async function validateMessageNode(state: SlackWorkflowState): Promise<Pa
     const messageText = getMessageText(state.slackEvent);
     console.log('📋 [VALIDATE] Extracted message text:', messageText?.substring(0, 200));
     
+    // Basic validation - must have message text and mentions
+    if (!messageText) {
+      console.log('❌ [VALIDATE] No message text');
+      return {
+        messageText,
+        shouldProcess: false,
+        errorOccurred: false
+      };
+    }
+    
+    // Check if message has any bot mentions at all
+    const mentions = messageText.match(/<@(U[A-Z0-9]+)>/g);
+    if (!mentions || mentions.length === 0) {
+      console.log('❌ [VALIDATE] No bot mentions found - skipping');
+      return {
+        messageText,
+        shouldProcess: false,
+        errorOccurred: false
+      };
+    }
+    
+    console.log('🔍 [VALIDATE] Found mentions:', mentions);
+    
     // In CLI mode, extract bot user ID from the message mention for validation
     if (isCLIMode && messageText) {
       const mentionMatch = messageText.match(/<@(U[A-Z0-9]+)>/);
@@ -90,17 +113,16 @@ export async function validateMessageNode(state: SlackWorkflowState): Promise<Pa
         return result;
       }
     }
+    
     console.log('📋 [VALIDATE] Bot user ID:', botUserId || 'NOT SET');
+    console.log('📋 [VALIDATE] Bot context:', state.botContext);
     
-    // Extract mentioned user ID to use as context for validation
-    const mentions = messageText?.match(/<@(U[A-Z0-9]+)>/g);
-    const mentionedUserId = mentions?.[0]?.match(/<@(U[A-Z0-9]+)>/)?.[1];
-    
-    console.log('📋 [VALIDATE] Mentioned user ID from message:', mentionedUserId);
+    // Use bot context if available, otherwise fall back to global botUserId
+    const effectiveBotUserId = state.botContext?.userId || botUserId;
+    console.log('📋 [VALIDATE] Effective bot user ID for validation:', effectiveBotUserId);
     
     // Use existing validation logic from SlackHandlerImpl
-    // Pass the mentioned user ID as context to validate against the intended bot
-    const shouldProcess = await shouldProcessMessage(state.slackEvent, mentionedUserId);
+    const shouldProcess = await shouldProcessMessage(state.slackEvent, effectiveBotUserId);
     console.log('📋 [VALIDATE] Should process:', shouldProcess);
     
     const result = {

@@ -14,6 +14,12 @@ export interface SlackWorkflowState {
   conversationContext: ConversationMessage[];
   messageText: string | null;
   
+  // Bot context for validation
+  botContext?: {
+    name: string;
+    userId: string | undefined;
+  };
+  
   // Claude integration
   claudeResponse: string | null;
   

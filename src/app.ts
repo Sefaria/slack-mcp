@@ -21,6 +21,7 @@ class SlackMCPApp {
   private sharedConfig: SharedConfig;
   private fallbackHandler: SlackHandlerImpl | null = null;
   private botUserIdCache: Map<string, string> = new Map(); // botName -> userId
+  private processedMessages: Set<string> = new Set(); // message deduplication
 
   constructor() {
     this.app = express();
@@ -297,6 +298,28 @@ class SlackMCPApp {
       // Handle message events
       if (type === 'event_callback' && event?.type === 'message') {
         console.log(`💬 Processing message event for bot "${botName}" with LangGraph:`, event);
+        
+        // Create unique message ID for deduplication
+        const messageId = `${event.channel}-${event.ts}`;
+        
+        // Check if we've already processed this message
+        if (this.processedMessages.has(messageId)) {
+          console.log(`⚠️ [DEDUP] Message ${messageId} already processed, skipping duplicate`);
+          res.status(200).send('OK');
+          return;
+        }
+        
+        // Mark message as processed
+        this.processedMessages.add(messageId);
+        console.log(`✅ [DEDUP] Marked message ${messageId} as processed`);
+        
+        // Clean up old processed messages (keep last 1000)
+        if (this.processedMessages.size > 1000) {
+          const messagesToRemove = Array.from(this.processedMessages).slice(0, 500);
+          messagesToRemove.forEach(id => this.processedMessages.delete(id));
+          console.log(`🧹 [DEDUP] Cleaned up ${messagesToRemove.length} old message IDs`);
+        }
+        
         // Respond quickly to avoid timeout
         res.status(200).send('OK');
         
@@ -326,6 +349,10 @@ class SlackMCPApp {
         text_preview: event.text?.substring(0, 100)
       });
       
+      // Get the cached bot user ID for this bot
+      const botUserId = this.botUserIdCache.get(bot.name);
+      console.log(`🔄 [WORKFLOW] Bot "${bot.name}" user ID: ${botUserId || 'NOT CACHED'}`);
+      
       // Create bot-specific workflow instance
       const workflow = bot.workflowFactory();
       
@@ -341,7 +368,12 @@ class SlackMCPApp {
         slackValidatedResponse: null,
         formattedResponse: null,
         error: null,
-        errorOccurred: false
+        errorOccurred: false,
+        // Add bot context for validation
+        botContext: {
+          name: bot.name,
+          userId: botUserId
+        }
       };
 
       console.log(`🔄 [WORKFLOW] Initial state created for bot "${bot.name}", invoking workflow...`);
