@@ -130,6 +130,16 @@ class SlackMCPApp {
   }
 
   async initialize(): Promise<void> {
+    // Add request logging middleware for debugging
+    this.app.use((req, res, next) => {
+      console.log(`🌐 ${new Date().toISOString()} - ${req.method} ${req.path}`);
+      if (req.path.includes('/slack/events')) {
+        console.log(`📋 Headers:`, JSON.stringify(req.headers, null, 2));
+        console.log(`📋 Body:`, JSON.stringify(req.body, null, 2));
+      }
+      next();
+    });
+    
     this.app.use(express.json());
     this.setupRoutes();
   }
@@ -165,23 +175,25 @@ class SlackMCPApp {
   private async handleSlackEvent(req: express.Request, res: express.Response, botName: string): Promise<void> {
     console.log(`📨 Received Slack event for bot "${botName}":`, JSON.stringify(req.body, null, 2));
     
-    const bot = botRegistry.getBot(botName);
-    if (!bot) {
-      console.error(`❌ Bot "${botName}" not found`);
-      res.status(404).json({ 
-        error: `Bot '${botName}' not found`, 
-        availableBots: botRegistry.listBots() 
-      });
-      return;
-    }
-
     const { type, event } = req.body;
 
     try {
-      // Handle URL verification challenge
+      // Handle URL verification challenge FIRST, before bot lookup
+      // This allows Slack to verify the URL even if bot isn't fully configured yet
       if (type === 'url_verification') {
         console.log(`✅ URL verification challenge received for bot "${botName}"`);
         res.json({ challenge: req.body.challenge });
+        return;
+      }
+
+      // Now check if bot exists (only needed for actual message processing)
+      const bot = botRegistry.getBot(botName);
+      if (!bot) {
+        console.error(`❌ Bot "${botName}" not found`);
+        res.status(404).json({ 
+          error: `Bot '${botName}' not found`, 
+          availableBots: botRegistry.listBots() 
+        });
         return;
       }
 
