@@ -349,9 +349,20 @@ class SlackMCPApp {
         text_preview: event.text?.substring(0, 100)
       });
       
-      // Get the cached bot user ID for this bot
-      const botUserId = this.botUserIdCache.get(bot.name);
-      console.log(`🔄 [WORKFLOW] Bot "${bot.name}" user ID: ${botUserId || 'NOT CACHED'}`);
+      // Get the cached bot user ID for this bot, with fallback mapping
+      let botUserId = this.botUserIdCache.get(bot.name);
+      
+      // Use fallback mapping if cache failed  
+      if (!botUserId) {
+        const fallbackMapping: Record<string, string> = {
+          'binah': 'U090X3GGN93',
+          'bina': 'U09EBP618TW'
+        };
+        botUserId = fallbackMapping[bot.name];
+        console.log(`🔄 [WORKFLOW] Using fallback user ID for bot "${bot.name}": ${botUserId || 'NOT FOUND'}`);
+      } else {
+        console.log(`🔄 [WORKFLOW] Using cached user ID for bot "${bot.name}": ${botUserId}`);
+      }
       
       // Create bot-specific workflow instance
       const workflow = bot.workflowFactory();

@@ -10,6 +10,7 @@ export const SlackStateAnnotation = Annotation.Root({
   threadHistory: Annotation<any[]>,
   conversationContext: Annotation<any[]>,
   messageText: Annotation<string | null>,
+  botContext: Annotation<{ name: string; userId: string | undefined } | undefined>,
   claudeResponse: Annotation<string | null>,
   needsSlackFormatting: Annotation<boolean>,
   slackValidatedResponse: Annotation<string | null>,
