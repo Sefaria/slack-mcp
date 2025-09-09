@@ -1,6 +1,5 @@
 import { createBaseWorkflow, WorkflowNodes } from './workflow-base';
 import { MultiServerMCPClient } from '@langchain/mcp-adapters';
-import { createDeepAgent } from 'deepagents';
 import {
   validateMessageNode,
   sendAcknowledgmentNode,
@@ -24,6 +23,9 @@ async function initializeBinahAgent() {
   console.log('🧠 Initializing Binah deep agent with MCP integration...');
   
   try {
+    // Dynamic import of deepagents (ES module)
+    const { createDeepAgent } = await import('deepagents');
+    
     // Configure Sefaria MCP server
     mcpClient = new MultiServerMCPClient({
       mcpServers: {
