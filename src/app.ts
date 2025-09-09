@@ -20,11 +20,11 @@ class SlackMCPApp {
   private app: express.Application;
   private sharedConfig: SharedConfig;
   private fallbackHandler: SlackHandlerImpl | null = null;
+  private botUserIdCache: Map<string, string> = new Map(); // botName -> userId
 
   constructor() {
     this.app = express();
     this.sharedConfig = this.loadSharedConfig();
-    this.discoverAndRegisterBots();
   }
 
   private loadSharedConfig(): SharedConfig {
@@ -46,7 +46,7 @@ class SlackMCPApp {
     };
   }
 
-  private discoverAndRegisterBots(): void {
+  private async discoverAndRegisterBots(): Promise<void> {
     console.log('🔍 Discovering bots from environment variables...');
     
     // Find all bot-specific environment variables
@@ -63,7 +63,7 @@ class SlackMCPApp {
       // Fallback: check for legacy single-bot config
       if (process.env.SLACK_BOT_TOKEN && process.env.SLACK_SIGNING_SECRET) {
         console.log('📦 Found legacy single-bot config, registering as "bina"');
-        this.registerBot({
+        await this.registerBot({
           name: 'bina',
           slackToken: process.env.SLACK_BOT_TOKEN,
           signingSecret: process.env.SLACK_SIGNING_SECRET,
@@ -93,7 +93,7 @@ class SlackMCPApp {
           continue;
         }
 
-        this.registerBot({
+        await this.registerBot({
           name: botName,
           slackToken: process.env[tokenVar]!,
           signingSecret: process.env[secretVar]!,
@@ -118,7 +118,77 @@ class SlackMCPApp {
     }
   }
 
-  private registerBot(config: BotConfig): void {
+  private detectBotFromMessage(requestBody: any): string {
+    console.log('🔍 [BOT-DETECT] Attempting to detect bot from message...');
+    
+    // First check if this is a URL verification (no message analysis needed)
+    if (requestBody.type === 'url_verification') {
+      console.log('🔍 [BOT-DETECT] URL verification request, defaulting to bina');
+      return 'bina';
+    }
+
+    // Extract the message text
+    const event = requestBody.event;
+    if (!event || event.type !== 'message') {
+      console.log('🔍 [BOT-DETECT] No message event, defaulting to bina');
+      return 'bina';
+    }
+
+    const messageText = event.text || '';
+    console.log('🔍 [BOT-DETECT] Message text:', messageText.substring(0, 100));
+
+    // Extract mentioned user IDs
+    const mentions = messageText.match(/<@(U[A-Z0-9]+)>/g);
+    if (!mentions || mentions.length === 0) {
+      console.log('🔍 [BOT-DETECT] No mentions found, defaulting to bina');
+      return 'bina';
+    }
+
+    const mentionedUserIds = mentions.map((m: string) => m.match(/<@(U[A-Z0-9]+)>/)![1]);
+    console.log('🔍 [BOT-DETECT] Mentioned user IDs:', mentionedUserIds);
+
+    // Check each bot's user ID against the mentions
+    const allBots = botRegistry.getAllBots();
+    console.log('🔍 [BOT-DETECT] Checking against', allBots.length, 'registered bots');
+
+    for (const bot of allBots) {
+      // We need to get the bot's user ID - but we can't easily do this without 
+      // initializing services. For now, let's use a lookup approach
+      console.log('🔍 [BOT-DETECT] Checking bot:', bot.name);
+      
+      // For simplicity, we'll check if any mentioned user ID could belong to this bot
+      // In the future, we could cache bot user IDs or use a lookup table
+      const botUserIdCandidate = this.getBotUserIdCandidate(bot.name, mentionedUserIds);
+      if (botUserIdCandidate) {
+        console.log(`🎯 [BOT-DETECT] Detected bot "${bot.name}" from mention ${botUserIdCandidate}`);
+        return bot.name;
+      }
+    }
+
+    // If no specific bot detected, fall back to bina for backward compatibility
+    console.log('🔍 [BOT-DETECT] No specific bot detected, defaulting to bina');
+    return 'bina';
+  }
+
+  private getBotUserIdCandidate(botName: string, mentionedUserIds: string[]): string | null {
+    // Check if any of the mentioned user IDs match this bot's cached user ID
+    const cachedBotUserId = this.botUserIdCache.get(botName);
+    
+    if (!cachedBotUserId) {
+      console.log(`🔍 [BOT-DETECT] No cached user ID for bot "${botName}"`);
+      return null;
+    }
+    
+    if (mentionedUserIds.includes(cachedBotUserId)) {
+      console.log(`🎯 [BOT-DETECT] Found matching user ID for bot "${botName}": ${cachedBotUserId}`);
+      return cachedBotUserId;
+    }
+    
+    console.log(`🔍 [BOT-DETECT] No matching user ID for bot "${botName}" (cached: ${cachedBotUserId}, mentions: ${mentionedUserIds.join(', ')})`);
+    return null;
+  }
+
+  private async registerBot(config: BotConfig): Promise<void> {
     botRegistry.registerBot(config);
     
     // Initialize services for this bot
@@ -127,9 +197,23 @@ class SlackMCPApp {
       this.sharedConfig.ANTHROPIC_API_KEY,
       this.sharedConfig.SEFARIA_MCP_URL
     );
+
+    // Cache the bot's user ID for routing
+    try {
+      const webClient = new (await import('@slack/web-api')).WebClient(config.slackToken);
+      const result = await webClient.auth.test();
+      const botUserId = result.user_id as string;
+      this.botUserIdCache.set(config.name, botUserId);
+      console.log(`📝 [BOT-CACHE] Cached user ID for bot "${config.name}": ${botUserId}`);
+    } catch (error) {
+      console.error(`❌ [BOT-CACHE] Failed to cache user ID for bot "${config.name}":`, error);
+    }
   }
 
   async initialize(): Promise<void> {
+    // First, discover and register bots (this will cache their user IDs)
+    await this.discoverAndRegisterBots();
+    
     // Add request logging middleware for debugging
     this.app.use((req, res, next) => {
       console.log(`🌐 ${new Date().toISOString()} - ${req.method} ${req.path}`);
@@ -160,9 +244,10 @@ class SlackMCPApp {
       });
     });
 
-    // Default route for backward compatibility (defaults to bina)
+    // Smart default route that detects the correct bot from mentions
     this.app.post('/slack/events', (req, res) => {
-      this.handleSlackEvent(req, res, 'bina');
+      const botName = this.detectBotFromMessage(req.body);
+      this.handleSlackEvent(req, res, botName);
     });
 
     // Dynamic bot-specific routes
