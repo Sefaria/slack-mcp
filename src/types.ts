@@ -55,4 +55,5 @@ export interface SlackHandler {
 
 export interface ClaudeService {
   sendMessage(messages: ConversationMessage[], mcpServerUrl: string): Promise<string>;
+  formatForSlack(response: string): Promise<string>;
 }

@@ -4,6 +4,7 @@ import { SlackMessageEvent } from './types';
 import { botRegistry, BotConfig } from './bot-registry';
 import { initializeServicesForCLI } from './nodes';
 import { createBinaWorkflow } from './workflows/bina-workflow';
+import { createBinahWorkflow } from './workflows/binah-workflow';
 
 dotenv.config();
 
@@ -105,8 +106,7 @@ class SlackMCPCLI {
       case 'bina':
         return createBinaWorkflow;
       case 'binah':
-        // Future: return createBinahWorkflow;
-        return createBinaWorkflow; // Temporary fallback
+        return createBinahWorkflow;
       default:
         console.warn(`⚠️ No specific workflow for bot "${botName}", using bina workflow`);
         return createBinaWorkflow;
@@ -150,7 +150,7 @@ class SlackMCPCLI {
     console.log(`\n🔄 Processing with bot "${botName}"...`);
     
     try {
-      // Create mock Slack event
+      // Create mock Slack event with bot name for validation
       const mockEvent = this.createMockSlackEvent(message, botName);
       
       // Create bot-specific workflow instance
@@ -210,14 +210,14 @@ class SlackMCPCLI {
 
   help                    - Show this help message
   bots                    - List available bots
-  <botname> <message>     - Send message to specific bot
-  <message>               - Send message to default bot (bina)
+  @<botname> <message>    - Send message to specific bot
+  <message>               - Record message (no bot response, like Slack)
   quit, exit, q           - Exit the CLI
 
 Examples:
-  > Hello, what can you help me with?
-  > bina What is the Mishnah?
-  > binah Tell me about the Talmudic discussion on prayer
+  > Hello everyone! (recorded, no response)
+  > @bina What is the Mishnah?
+  > @binah Tell me about the Talmudic discussion on prayer
 
 Available bots: [${botRegistry.listBots().join(', ')}]
 `);
@@ -225,12 +225,12 @@ Available bots: [${botRegistry.listBots().join(', ')}]
 
   public async start(): Promise<void> {
     console.log(`
-╔════════════════════════════════════════════════╗
-║           Slack MCP CLI Testing Mode           ║
-║                                                ║
-║  Test your bots locally without Slack!        ║
-║  Type 'help' for commands or 'quit' to exit   ║
-╚════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════╗
+║            Slack MCP CLI Testing Mode            ║
+║                                                  ║
+║    Test your bots locally without Slack!         ║
+║    Type 'help' for commands or 'quit' to exit    ║
+╚══════════════════════════════════════════════════╝
 `);
 
     this.showHelp();
@@ -244,40 +244,41 @@ Available bots: [${botRegistry.listBots().join(', ')}]
         return;
       }
 
-      const words = trimmed.split(' ');
-      const firstWord = words[0].toLowerCase();
-
       try {
-        switch (firstWord) {
-          case 'help':
-            this.showHelp();
-            break;
-            
-          case 'bots':
-            console.log(`\nAvailable bots: [${botRegistry.listBots().join(', ')}]`);
-            break;
-            
-          case 'quit':
-          case 'exit':
-          case 'q':
-            console.log('👋 Goodbye!');
-            process.exit(0);
-            break;
-            
-          default:
-            // Check if first word is a bot name
-            if (botRegistry.hasBot(firstWord)) {
-              const message = words.slice(1).join(' ');
-              if (message) {
-                await this.processMessage(message, firstWord);
-              } else {
-                console.log(`❌ Please provide a message for bot "${firstWord}"`);
-              }
+        // Check for special commands first
+        if (trimmed === 'help') {
+          this.showHelp();
+          return;
+        }
+        
+        if (trimmed === 'bots') {
+          console.log(`\nAvailable bots: [${botRegistry.listBots().join(', ')}]`);
+          return;
+        }
+        
+        if (trimmed === 'quit' || trimmed === 'exit' || trimmed === 'q') {
+          console.log('👋 Goodbye!');
+          process.exit(0);
+          return;
+        }
+
+        // Check for @mention pattern: @botname followed by non-word character or end of string
+        const mentionMatch = trimmed.match(/^@(\w+)(?:\W|$)/);
+        if (mentionMatch) {
+          const botName = mentionMatch[1].toLowerCase();
+          if (botRegistry.hasBot(botName)) {
+            const message = trimmed.substring(mentionMatch[0].length).trim();
+            if (message) {
+              await this.processMessage(message, botName);
             } else {
-              // Treat entire input as message for default bot (bina)
-              await this.processMessage(trimmed, 'bina');
+              console.log(`❌ Please provide a message for bot "${botName}"`);
             }
-            break;
+          } else {
+            console.log(`❌ Bot "@${botName}" not found. Available bots: [${botRegistry.listBots().join(', ')}]`);
+          }
+        } else {
+          // No @mention - in real Slack, this wouldn't trigger any bot
+          console.log(`💬 Message recorded: "${trimmed}" (no bot mentioned, no response generated)`);
         }
       } catch (error) {
         console.log(`❌ Error: ${error instanceof Error ? error.message : String(error)}`);

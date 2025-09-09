@@ -5,6 +5,7 @@ import { ClaudeServiceImpl } from './claude-service';
 import { SlackMessageEvent } from './types';
 import { botRegistry, BotConfig } from './bot-registry';
 import { createBinaWorkflow } from './workflows/bina-workflow';
+import { createBinahWorkflow } from './workflows/binah-workflow';
 import { initializeServices } from './nodes';
 
 dotenv.config();
@@ -110,8 +111,7 @@ class SlackMCPApp {
       case 'bina':
         return createBinaWorkflow;
       case 'binah':
-        // Future: return createBinahWorkflow;
-        return createBinaWorkflow; // Temporary fallback
+        return createBinahWorkflow;
       default:
         console.warn(`⚠️ No specific workflow for bot "${botName}", using bina workflow`);
         return createBinaWorkflow;

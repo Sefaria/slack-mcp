@@ -211,6 +211,73 @@ SLACK FORMATTING (use exactly as specified):
     }
   }
 
+  async formatForSlack(response: string): Promise<string> {
+    try {
+      console.log('🛠️ [CLAUDE-4-FORMAT] Starting Claude 4 Slack formatting correction...');
+      console.log('🛠️ [CLAUDE-4-FORMAT] Input length:', response.length);
+      
+      const correctionResponse = await this.client.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 12000,
+        temperature: 0,
+        messages: [{
+          role: 'user',
+          content: `Convert this response to proper Slack formatting. 
+
+CRITICAL REQUIREMENT: You MUST include the COMPLETE content of the input in your output. Do not truncate, summarize, or ask if the user wants you to continue. Convert the ENTIRE response.
+
+Follow these formatting rules exactly:
+
+• Bold text: *bold text* (single asterisks only)
+• Italic text: _italic text_ (underscores only)
+• Headers: *Header Text* (bold, no # symbols)
+• Bullets: • Bullet point (use bullet character)
+• Links: <https://www.sefaria.org/Genesis.3.4|Genesis 3:4> (angle brackets with pipe separator)
+• For Sefaria URLs: replace internal spaces with underscores, replace space before verses and verse colons with periods
+• Convert HTML links like <a href="url">text</a> to <url|text>
+• No markdown headers (#, ##, ###) - use *bold* instead
+• No double asterisks (**) - use single asterisks (*)
+• No HTML tags at all
+
+Sefaria Link Formatting Examples:
+• HTML: <a href="https://www.sefaria.org/Midrash_Tanchuma%2C_Bereshit.4.1" target="_blank">Midrash Tanchuma on Bereshit 4:1</a>
+• Slack: <https://www.sefaria.org/Midrash_Tanchuma,_Bereshit.4.1|Midrash Tanchuma on Bereshit 4:1>
+
+• HTML: <a href="https://www.sefaria.org/Genesis 3:4" target="_blank">Genesis 3:4</a>
+• Slack: <https://www.sefaria.org/Genesis.3.4|Genesis 3:4>
+
+Key transformations for Sefaria URLs:
+1. Remove URL encoding (%2C becomes ,)
+2. Replace spaces in book names with underscores: "Song of Songs" → "Song_of_Songs"
+3. Replace space before verse numbers with periods: "Genesis 3:4" → "Genesis.3.4"
+4. Replace colons in verse references with periods: "3:4" → "3.4"
+5. Keep commas in commentary names: "Tanchuma, Bereshit" stays as "Tanchuma,_Bereshit"
+
+Response to convert (CONVERT EVERYTHING, DO NOT TRUNCATE):
+${response}`
+        }]
+      });
+      
+      const correctedText = correctionResponse.content
+        .filter(block => block.type === 'text')
+        .map(block => (block as any).text)
+        .join('');
+      
+      console.log('🛠️ [CLAUDE-4-FORMAT] Correction completed');
+      console.log('🛠️ [CLAUDE-4-FORMAT] Output length:', correctedText.length);
+      console.log('🛠️ [CLAUDE-4-FORMAT] Length ratio:', (correctedText.length / response.length).toFixed(2));
+      
+      if (correctedText.length < response.length * 0.8) {
+        console.warn('🛠️ [CLAUDE-4-FORMAT] WARNING: Output significantly shorter than input, may be truncated');
+      }
+      
+      return correctedText || response;
+    } catch (error) {
+      console.error('🛠️ [CLAUDE-4-FORMAT] Error formatting with Claude 4:', error);
+      return response;
+    }
+  }
+
   private buildMCPConfig(): MCPServerConfig {
     return {
       name: 'sefaria',

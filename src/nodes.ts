@@ -61,6 +61,35 @@ export async function validateMessageNode(state: SlackWorkflowState): Promise<Pa
     // Extract message text
     const messageText = getMessageText(state.slackEvent);
     console.log('📋 [VALIDATE] Extracted message text:', messageText?.substring(0, 200));
+    
+    // In CLI mode, extract bot user ID from the message mention for validation
+    if (isCLIMode && messageText) {
+      const mentionMatch = messageText.match(/<@(U[A-Z0-9]+)>/);
+      if (mentionMatch) {
+        const currentBotUserId = mentionMatch[1];
+        console.log('📋 [VALIDATE] Extracted bot user ID from message:', currentBotUserId);
+        
+        // Temporarily set the bot user ID for validation
+        const originalBotUserId = botUserId;
+        botUserId = currentBotUserId;
+        
+        // Use existing validation logic from SlackHandlerImpl
+        const shouldProcess = await shouldProcessMessage(state.slackEvent);
+        console.log('📋 [VALIDATE] Should process:', shouldProcess);
+        
+        // Restore original bot user ID
+        botUserId = originalBotUserId;
+        
+        const result = {
+          messageText,
+          shouldProcess,
+          errorOccurred: false
+        };
+        
+        console.log('📋 [VALIDATE] Validation result:', result);
+        return result;
+      }
+    }
     console.log('📋 [VALIDATE] Bot user ID:', botUserId || 'NOT SET');
     
     // Use existing validation logic from SlackHandlerImpl
@@ -269,7 +298,7 @@ export async function validateSlackFormattingNode(state: SlackWorkflowState): Pr
     const needsFormatting = hasHtmlLinks || hasMarkdownHeaders || hasDoubleAsterisks;
     
     if (needsFormatting) {
-      console.log('🔍 [SLACK-FORMAT] Non-Slack formatting detected, correcting with Claude 3.5 Haiku...');
+      console.log('🔍 [SLACK-FORMAT] Non-Slack formatting detected, correcting with Claude 4...');
       const correctedResponse = await correctSlackFormatting(response);
       
       return {
@@ -619,61 +648,15 @@ function addCoverageWarningIfNeeded(response: string): string {
 
 async function correctSlackFormatting(response: string): Promise<string> {
   try {
-    console.log('🛠️ [CORRECTION] Starting Claude 3.5 Haiku formatting correction...');
+    console.log('🛠️ [CORRECTION] Using Claude 4 formatting service...');
     
-    const correctionResponse = await haikuClient.messages.create({
-      model: 'claude-3-5-haiku-20241022',
-      max_tokens: 4000,
-      temperature: 0,
-      messages: [{
-        role: 'user',
-        content: `Convert this response to proper Slack formatting. Follow these rules exactly:
-
-• Bold text: *bold text* (single asterisks only)
-• Italic text: _italic text_ (underscores only)
-• Headers: *Header Text* (bold, no # symbols)
-• Bullets: • Bullet point (use bullet character)
-• Links: <https://www.sefaria.org/Genesis.3.4|Genesis 3:4> (angle brackets with pipe separator)
-• For Sefaria URLs: replace internal spaces with underscores, replace space before verses and verse colons with periods
-• Convert HTML links like <a href="url">text</a> to <url|text>
-• No markdown headers (#, ##, ###) - use *bold* instead
-• No double asterisks (**) - use single asterisks (*)
-• No HTML tags at all
-
-Sefaria Link Formatting Examples:
-• HTML: <a href="https://www.sefaria.org/Midrash_Tanchuma%2C_Bereshit.4.1" target="_blank">Midrash Tanchuma on Bereshit 4:1</a>
-• Slack: <https://www.sefaria.org/Midrash_Tanchuma,_Bereshit.4.1|Midrash Tanchuma on Bereshit 4:1>
-
-• HTML: <a href="https://www.sefaria.org/Rabbeinu_Bahya%2C_Devarim.6.9.2" target="_blank">Rabbeinu Bahya on Deuteronomy 6:9</a>
-• Slack: <https://www.sefaria.org/Rabbeinu_Bahya,_Devarim.6.9.2|Rabbeinu Bahya on Deuteronomy 6:9>
-
-• HTML: <a href="https://www.sefaria.org/Genesis 3:4" target="_blank">Genesis 3:4</a>
-• Slack: <https://www.sefaria.org/Genesis.3.4|Genesis 3:4>
-
-• HTML: <a href="https://www.sefaria.org/Song of Songs 2:15" target="_blank">Song of Songs 2:15</a>
-• Slack: <https://www.sefaria.org/Song_of_Songs.2.15|Song of Songs 2:15>
-
-Key transformations for Sefaria URLs:
-1. Remove URL encoding (%2C becomes ,)
-2. Replace spaces in book names with underscores: "Song of Songs" → "Song_of_Songs"
-3. Replace space before verse numbers with periods: "Genesis 3:4" → "Genesis.3.4"
-4. Replace colons in verse references with periods: "3:4" → "3.4"
-5. Keep commas in commentary names: "Tanchuma, Bereshit" stays as "Tanchuma,_Bereshit"
-
-Response to convert:
-${response}`
-      }]
-    });
+    // Use the Claude 4 service instead of Haiku
+    const correctedText = await claudeService.formatForSlack(response);
     
-    const correctedText = correctionResponse.content
-      .filter(block => block.type === 'text')
-      .map(block => (block as any).text)
-      .join('');
-    
-    console.log('🛠️ [CORRECTION] Correction completed, length:', correctedText.length);
+    console.log('🛠️ [CORRECTION] Claude 4 formatting completed, length:', correctedText.length);
     console.log('🛠️ [CORRECTION] Corrected preview:', correctedText.substring(0, 200));
     
-    return correctedText || response;
+    return correctedText;
   } catch (error) {
     console.error('🛠️ [CORRECTION] Error correcting Slack formatting:', error);
     // Fallback to basic conversion

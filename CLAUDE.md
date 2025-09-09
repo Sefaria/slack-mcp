@@ -9,7 +9,7 @@ This is a multi-bot Slack platform that integrates Claude LLM with Sefaria's Jew
 ### Multi-Bot Architecture
 The platform supports multiple bots with different personalities and specializations:
 - **Bina** (בינה) - Main scholarly assistant for general Jewish text inquiries
-- **Binah** (בינה) - Deep research variant for comprehensive analysis (planned)
+- **Binah** (בינה) - Deep research variant using DeepAgents for comprehensive analysis with enhanced planning, sub-agents, and multi-step reasoning capabilities
 - Each bot has its own Slack webhook endpoint but shares common infrastructure (Claude API, MCP connector)
 
 ## Development Commands
@@ -39,7 +39,7 @@ The application uses **LangGraph** for orchestrating message processing through 
 1. **validate** - Validates message, checks mentions, determines processing need
 2. **acknowledge** - Sends contextual emoji reaction (🤔, 👀, 🙏, 📜, 📚)
 3. **fetchContext** - Retrieves thread history, builds conversation context
-4. **callClaude** - Calls Claude API with MCP integration for Sefaria access
+4. **callClaude** - Calls Claude API with MCP integration for Sefaria access (Bina bot) OR **callDeepAgent** - Uses DeepAgents framework with MCP tools for advanced reasoning (Binah bot)
 5. **validateSlackFormatting** - Checks if response needs formatting fixes
 6. **formatResponse** - Applies final formatting, coverage warnings
 7. **sendResponse** - Posts formatted response to Slack
@@ -73,6 +73,33 @@ The workflow uses `SlackWorkflowState` to track:
 4. **`src/slack-handler.ts`** - Fallback message processing (legacy compatibility, used when LangGraph workflow fails)
 5. **`src/claude-service.ts`** - Shared Claude API integration with MCP connector
 6. **`src/types.ts`** - TypeScript interfaces for all components
+
+### DeepAgents Integration (Binah Bot)
+
+**Binah** bot leverages the **DeepAgents** framework for sophisticated multi-step reasoning and planning capabilities:
+
+#### Architecture Overview
+- **Native MCP Integration**: Uses `@langchain/mcp-adapters` to connect directly to Sefaria MCP server
+- **Enhanced Reasoning**: Employs planning tools and sub-agents for complex scholarly analysis
+- **Persistent State**: Virtual file system maintains context across interactions
+- **Tool Orchestration**: Local tool execution with LLM-driven tool selection
+
+#### Key Components
+- **`src/workflows/binah-workflow.ts`** - DeepAgent implementation with Sefaria MCP integration
+- **MultiServerMCPClient** - Handles MCP server connections and tool discovery
+- **Planning Tools** - Built-in task decomposition and systematic analysis
+- **Sub-agents** - Specialized agents for Hebrew analysis, comparative studies, etc.
+
+#### Capabilities Enhancement
+- **Multi-step Analysis**: Breaks complex questions into systematic sub-tasks
+- **Comparative Research**: Cross-references multiple sources and time periods
+- **Deep Context**: Maintains scholarly conversation context across sessions
+- **Advanced Citations**: Enhanced source attribution and link formatting
+
+#### DeepAgents Dependencies
+- **deepagents** - Core DeepAgents framework
+- **@langchain/mcp-adapters** - MCP integration for LangChain/LangGraph
+- **@modelcontextprotocol/sdk** - MCP protocol implementation
 
 ### Key Dependencies
 - **Express v4.21.2** (v5 has TypeScript compatibility issues)
