@@ -92,8 +92,15 @@ export async function validateMessageNode(state: SlackWorkflowState): Promise<Pa
     }
     console.log('📋 [VALIDATE] Bot user ID:', botUserId || 'NOT SET');
     
+    // Extract mentioned user ID to use as context for validation
+    const mentions = messageText?.match(/<@(U[A-Z0-9]+)>/g);
+    const mentionedUserId = mentions?.[0]?.match(/<@(U[A-Z0-9]+)>/)?.[1];
+    
+    console.log('📋 [VALIDATE] Mentioned user ID from message:', mentionedUserId);
+    
     // Use existing validation logic from SlackHandlerImpl
-    const shouldProcess = await shouldProcessMessage(state.slackEvent);
+    // Pass the mentioned user ID as context to validate against the intended bot
+    const shouldProcess = await shouldProcessMessage(state.slackEvent, mentionedUserId);
     console.log('📋 [VALIDATE] Should process:', shouldProcess);
     
     const result = {
@@ -471,10 +478,14 @@ export function getMessageText(event: SlackMessageEvent): string | null {
   return null;
 }
 
-async function shouldProcessMessage(event: SlackMessageEvent): Promise<boolean> {
+async function shouldProcessMessage(event: SlackMessageEvent, contextBotUserId?: string): Promise<boolean> {
   if (event.bot_id) return false;
   if (event.subtype && event.subtype !== 'bot_message') return false;
-  if (event.user === botUserId) return false; // Skip our own messages
+  
+  // Use context bot user ID if provided, otherwise fallback to global
+  const effectiveBotUserId = contextBotUserId || botUserId;
+  
+  if (event.user === effectiveBotUserId) return false; // Skip our own messages
   
   const messageText = getMessageText(event);
   if (!messageText) return false;
@@ -483,20 +494,22 @@ async function shouldProcessMessage(event: SlackMessageEvent): Promise<boolean> 
   const mentions = messageText.match(/<@(U[A-Z0-9]+)>/g);
   if (mentions) {
     console.log('🔍 [MENTION-DEBUG] Found mentions:', mentions);
-    console.log('🔍 [MENTION-DEBUG] Current bot user ID:', botUserId);
+    console.log('🔍 [MENTION-DEBUG] Context bot user ID:', contextBotUserId);
+    console.log('🔍 [MENTION-DEBUG] Global bot user ID:', botUserId);
+    console.log('🔍 [MENTION-DEBUG] Effective bot user ID:', effectiveBotUserId);
   }
   
   // Only process if bot is explicitly mentioned
-  if (botUserId && messageText.includes(`<@${botUserId}>`)) {
-    console.log(`✅ Bot mentioned! Bot ID: ${botUserId}`);
+  if (effectiveBotUserId && messageText.includes(`<@${effectiveBotUserId}>`)) {
+    console.log(`✅ Bot mentioned! Bot ID: ${effectiveBotUserId}`);
     return true;
   }
   
   // If bot user ID isn't ready yet, don't process any messages
-  if (!botUserId) {
+  if (!effectiveBotUserId) {
     console.log('❌ Bot user ID not ready yet');
   } else if (mentions && mentions.length > 0) {
-    console.log(`❌ Bot not mentioned. Message mentions: ${mentions.join(', ')} but bot ID is: ${botUserId}`);
+    console.log(`❌ Bot not mentioned. Message mentions: ${mentions.join(', ')} but bot ID is: ${effectiveBotUserId}`);
   }
   
   return false;
