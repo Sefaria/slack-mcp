@@ -479,6 +479,13 @@ async function shouldProcessMessage(event: SlackMessageEvent): Promise<boolean> 
   const messageText = getMessageText(event);
   if (!messageText) return false;
   
+  // Extract any mentioned user IDs for debugging
+  const mentions = messageText.match(/<@(U[A-Z0-9]+)>/g);
+  if (mentions) {
+    console.log('🔍 [MENTION-DEBUG] Found mentions:', mentions);
+    console.log('🔍 [MENTION-DEBUG] Current bot user ID:', botUserId);
+  }
+  
   // Only process if bot is explicitly mentioned
   if (botUserId && messageText.includes(`<@${botUserId}>`)) {
     console.log(`✅ Bot mentioned! Bot ID: ${botUserId}`);
@@ -488,6 +495,8 @@ async function shouldProcessMessage(event: SlackMessageEvent): Promise<boolean> 
   // If bot user ID isn't ready yet, don't process any messages
   if (!botUserId) {
     console.log('❌ Bot user ID not ready yet');
+  } else if (mentions && mentions.length > 0) {
+    console.log(`❌ Bot not mentioned. Message mentions: ${mentions.join(', ')} but bot ID is: ${botUserId}`);
   }
   
   return false;

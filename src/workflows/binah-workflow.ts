@@ -23,8 +23,9 @@ async function initializeBinahAgent() {
   console.log('🧠 Initializing Binah deep agent with MCP integration...');
   
   try {
-    // Dynamic import of deepagents (ES module)
-    const { createDeepAgent } = await import('deepagents');
+    // Dynamic import of deepagents (ES module) - use eval to prevent TypeScript compilation issues
+    const deepAgentsModule = await eval('import("deepagents")');
+    const { createDeepAgent } = deepAgentsModule;
     
     // Configure Sefaria MCP server
     mcpClient = new MultiServerMCPClient({
