@@ -150,14 +150,11 @@ class SlackMCPApp {
     // Check each bot's user ID against the mentions
     const allBots = botRegistry.getAllBots();
     console.log('🔍 [BOT-DETECT] Checking against', allBots.length, 'registered bots');
+    console.log('🔍 [BOT-DETECT] Current cache contents:', Object.fromEntries(this.botUserIdCache.entries()));
 
     for (const bot of allBots) {
-      // We need to get the bot's user ID - but we can't easily do this without 
-      // initializing services. For now, let's use a lookup approach
       console.log('🔍 [BOT-DETECT] Checking bot:', bot.name);
       
-      // For simplicity, we'll check if any mentioned user ID could belong to this bot
-      // In the future, we could cache bot user IDs or use a lookup table
       const botUserIdCandidate = this.getBotUserIdCandidate(bot.name, mentionedUserIds);
       if (botUserIdCandidate) {
         console.log(`🎯 [BOT-DETECT] Detected bot "${bot.name}" from mention ${botUserIdCandidate}`);
@@ -175,7 +172,22 @@ class SlackMCPApp {
     const cachedBotUserId = this.botUserIdCache.get(botName);
     
     if (!cachedBotUserId) {
-      console.log(`🔍 [BOT-DETECT] No cached user ID for bot "${botName}"`);
+      console.log(`🔍 [BOT-DETECT] No cached user ID for bot "${botName}" - using fallback heuristic mapping`);
+      
+      // Fallback heuristic mapping for cases where API caching failed
+      // This is based on known user IDs from your deployment
+      const fallbackMapping: Record<string, string> = {
+        'binah': 'U090X3GGN93',  // Based on your logs - binah bot has this user ID
+        'bina': 'U09EBP618TW'    // Based on your logs - bina bot has this user ID  
+      };
+      
+      const fallbackUserId = fallbackMapping[botName];
+      if (fallbackUserId && mentionedUserIds.includes(fallbackUserId)) {
+        console.log(`🎯 [BOT-DETECT] Fallback mapping found match for bot "${botName}": ${fallbackUserId}`);
+        return fallbackUserId;
+      }
+      
+      console.log(`🔍 [BOT-DETECT] No fallback mapping match for bot "${botName}"`);
       return null;
     }
     
