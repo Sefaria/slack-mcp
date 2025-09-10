@@ -20,7 +20,7 @@ class SlackMCPApp {
   private app: express.Application;
   private sharedConfig: SharedConfig;
   private fallbackHandler: SlackHandlerImpl | null = null;
-  private botUserIdCache: Map<string, string> = new Map(); // botName -> userId
+  private botInfoCache: Map<string, {name: string, appId?: string, userId?: string}> = new Map(); // bot_id -> bot info
   private processedMessages: Set<string> = new Set(); // message deduplication
 
   constructor() {
@@ -119,85 +119,97 @@ class SlackMCPApp {
     }
   }
 
-  private detectBotFromMessage(requestBody: any): string {
+  private async detectBotFromMessage(requestBody: any): Promise<string> {
     console.log('🔍 [BOT-DETECT] Attempting to detect bot from message...');
     
-    // First check if this is a URL verification (no message analysis needed)
+    // Handle URL verification requests
     if (requestBody.type === 'url_verification') {
       console.log('🔍 [BOT-DETECT] URL verification request, defaulting to bina');
       return 'bina';
     }
 
-    // Extract the message text
+    // Extract the message event
     const event = requestBody.event;
     if (!event || event.type !== 'message') {
       console.log('🔍 [BOT-DETECT] No message event, defaulting to bina');
       return 'bina';
     }
 
-    const messageText = event.text || '';
-    console.log('🔍 [BOT-DETECT] Message text:', messageText.substring(0, 100));
-
-    // Extract mentioned user IDs
-    const mentions = messageText.match(/<@(U[A-Z0-9]+)>/g);
-    if (!mentions || mentions.length === 0) {
-      console.log('🔍 [BOT-DETECT] No mentions found, defaulting to bina');
-      return 'bina';
-    }
-
-    const mentionedUserIds = mentions.map((m: string) => m.match(/<@(U[A-Z0-9]+)>/)![1]);
-    console.log('🔍 [BOT-DETECT] Mentioned user IDs:', mentionedUserIds);
-
-    // Check each bot's user ID against the mentions
-    const allBots = botRegistry.getAllBots();
-    console.log('🔍 [BOT-DETECT] Checking against', allBots.length, 'registered bots');
-    console.log('🔍 [BOT-DETECT] Current cache contents:', Object.fromEntries(this.botUserIdCache.entries()));
-
-    for (const bot of allBots) {
-      console.log('🔍 [BOT-DETECT] Checking bot:', bot.name);
-      
-      const botUserIdCandidate = this.getBotUserIdCandidate(bot.name, mentionedUserIds);
-      if (botUserIdCandidate) {
-        console.log(`🎯 [BOT-DETECT] Detected bot "${bot.name}" from mention ${botUserIdCandidate}`);
-        return bot.name;
+    // Use bots.info API for dynamic bot identification when bot_id is present
+    if (event.bot_id) {
+      console.log(`🔍 [BOT-DETECT] Message has bot_id: ${event.bot_id}`);
+      const identifiedBot = await this.identifyBotFromBotId(event.bot_id);
+      if (identifiedBot) {
+        console.log(`🎯 [BOT-DETECT] Successfully identified bot "${identifiedBot}" from bot_id ${event.bot_id}`);
+        return identifiedBot;
       }
+      console.log(`⚠️ [BOT-DETECT] Could not identify bot from bot_id ${event.bot_id}`);
     }
 
-    // If no specific bot detected, fall back to bina for backward compatibility
-    console.log('🔍 [BOT-DETECT] No specific bot detected, defaulting to bina');
+    // Default to bina for backward compatibility (handles mentions, direct messages, etc.)
+    console.log('🔍 [BOT-DETECT] No bot_id or identification failed, defaulting to bina');
     return 'bina';
   }
 
-  private getBotUserIdCandidate(botName: string, mentionedUserIds: string[]): string | null {
-    // Check if any of the mentioned user IDs match this bot's cached user ID
-    const cachedBotUserId = this.botUserIdCache.get(botName);
+
+  // Identify which bot a message came from using bot_id and bots.info API
+  async identifyBotFromBotId(botId: string): Promise<string | null> {
+    if (!botId) return null;
     
-    if (!cachedBotUserId) {
-      console.log(`🔍 [BOT-DETECT] No cached user ID for bot "${botName}" - using fallback heuristic mapping`);
-      
-      // Fallback heuristic mapping for cases where API caching failed
-      // This is based on known user IDs from your deployment
-      const fallbackMapping: Record<string, string> = {
-        'binah': 'U090X3GGN93',  // Based on your logs - binah bot has this user ID
-        'bina': 'U09EBP618TW'    // Based on your logs - bina bot has this user ID  
-      };
-      
-      const fallbackUserId = fallbackMapping[botName];
-      if (fallbackUserId && mentionedUserIds.includes(fallbackUserId)) {
-        console.log(`🎯 [BOT-DETECT] Fallback mapping found match for bot "${botName}": ${fallbackUserId}`);
-        return fallbackUserId;
-      }
-      
-      console.log(`🔍 [BOT-DETECT] No fallback mapping match for bot "${botName}"`);
+    // Check cache first
+    const cachedInfo = this.botInfoCache.get(botId);
+    if (cachedInfo) {
+      console.log(`🎯 [BOT-ID] Using cached bot info for ${botId}: ${cachedInfo.name}`);
+      return cachedInfo.name;
+    }
+    
+    console.log(`🔍 [BOT-ID] Looking up bot info for bot_id: ${botId}`);
+    
+    // Try to get bot info using any available Slack token
+    // We'll use the first registered bot's token for the API call
+    const registeredBots = botRegistry.listBots();
+    if (registeredBots.length === 0) {
+      console.warn(`⚠️ [BOT-ID] No registered bots available for API lookup`);
       return null;
     }
     
-    if (mentionedUserIds.includes(cachedBotUserId)) {
-      console.log(`🎯 [BOT-DETECT] Found matching user ID for bot "${botName}": ${cachedBotUserId}`);
-      return cachedBotUserId;
+    for (const botName of registeredBots) {
+      try {
+        const bot = botRegistry.getBot(botName);
+        if (!bot) continue;
+        
+        const webClient = new (await import('@slack/web-api')).WebClient(bot.slackToken);
+        const result = await webClient.bots.info({ bot: botId });
+        
+        if (result.ok && result.bot) {
+          const botInfo = {
+            name: result.bot.name || 'unknown',
+            appId: result.bot.app_id,
+            userId: result.bot.user_id
+          };
+          
+          // Cache the result
+          this.botInfoCache.set(botId, botInfo);
+          
+          console.log(`✅ [BOT-ID] Retrieved bot info for ${botId}:`, botInfo);
+          
+          // Check if this bot belongs to one of our registered bots by matching app_id or name
+          const matchingBot = registeredBots.find(name => {
+            const registeredBot = botRegistry.getBot(name);
+            // We can match by name (if bot names match our bot names)
+            // or later implement app_id matching if needed
+            return name === botInfo.name.toLowerCase();
+          });
+          
+          return matchingBot || botInfo.name;
+        }
+      } catch (error) {
+        console.log(`⚠️ [BOT-ID] Failed to lookup bot info with ${botName} token:`, error instanceof Error ? error.message : String(error));
+        continue;
+      }
     }
     
-    console.log(`🔍 [BOT-DETECT] No matching user ID for bot "${botName}" (cached: ${cachedBotUserId}, mentions: ${mentionedUserIds.join(', ')})`);
+    console.warn(`❌ [BOT-ID] Could not retrieve bot info for bot_id: ${botId}`);
     return null;
   }
 
@@ -211,20 +223,11 @@ class SlackMCPApp {
       this.sharedConfig.SEFARIA_MCP_URL
     );
 
-    // Cache the bot's user ID for routing
-    try {
-      const webClient = new (await import('@slack/web-api')).WebClient(config.slackToken);
-      const result = await webClient.auth.test();
-      const botUserId = result.user_id as string;
-      this.botUserIdCache.set(config.name, botUserId);
-      console.log(`📝 [BOT-CACHE] Cached user ID for bot "${config.name}": ${botUserId}`);
-    } catch (error) {
-      console.error(`❌ [BOT-CACHE] Failed to cache user ID for bot "${config.name}":`, error);
-    }
+    // Bot registration complete - user ID lookup handled dynamically via bots.info API
   }
 
   async initialize(): Promise<void> {
-    // First, discover and register bots (this will cache their user IDs)
+    // First, discover and register bots
     await this.discoverAndRegisterBots();
     
     // Add request logging middleware for debugging
@@ -258,8 +261,8 @@ class SlackMCPApp {
     });
 
     // Smart default route that detects the correct bot from mentions
-    this.app.post('/slack/events', (req, res) => {
-      const botName = this.detectBotFromMessage(req.body);
+    this.app.post('/slack/events', async (req, res) => {
+      const botName = await this.detectBotFromMessage(req.body);
       this.handleSlackEvent(req, res, botName);
     });
 
@@ -349,20 +352,7 @@ class SlackMCPApp {
         text_preview: event.text?.substring(0, 100)
       });
       
-      // Get the cached bot user ID for this bot, with fallback mapping
-      let botUserId = this.botUserIdCache.get(bot.name);
-      
-      // Use fallback mapping if cache failed  
-      if (!botUserId) {
-        const fallbackMapping: Record<string, string> = {
-          'binah': 'U090X3GGN93',
-          'bina': 'U09EBP618TW'
-        };
-        botUserId = fallbackMapping[bot.name];
-        console.log(`🔄 [WORKFLOW] Using fallback user ID for bot "${bot.name}": ${botUserId || 'NOT FOUND'}`);
-      } else {
-        console.log(`🔄 [WORKFLOW] Using cached user ID for bot "${bot.name}": ${botUserId}`);
-      }
+      // Bot context now handled dynamically via bots.info API
       
       // Create bot-specific workflow instance
       const workflow = bot.workflowFactory();
@@ -380,10 +370,10 @@ class SlackMCPApp {
         formattedResponse: null,
         error: null,
         errorOccurred: false,
-        // Add bot context for validation
+        // Add bot context for validation (userId resolved dynamically via bots.info API)
         botContext: {
           name: bot.name,
-          userId: botUserId
+          userId: undefined
         }
       };
 
