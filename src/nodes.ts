@@ -301,7 +301,13 @@ export async function validateSlackFormattingNode(state: SlackWorkflowState): Pr
   try {
     console.log('🔍 [SLACK-FORMAT] Starting Slack formatting validation...');
     
-    const response = state.claudeResponse || '';
+    // Ensure response is a string
+    let response = state.claudeResponse || '';
+    if (typeof response !== 'string') {
+      console.log('🔍 [SLACK-FORMAT] Response is not a string, converting...', typeof response);
+      response = String(response);
+    }
+    
     console.log('🔍 [SLACK-FORMAT] Input response length:', response.length);
     console.log('🔍 [SLACK-FORMAT] Input response preview:', response.substring(0, 200));
     
@@ -357,6 +363,13 @@ export async function formatResponseNode(state: SlackWorkflowState): Promise<Par
     
     // Use the Slack-validated response from the previous node
     let response = state.slackValidatedResponse || state.claudeResponse || '';
+    
+    // Ensure response is a string
+    if (typeof response !== 'string') {
+      console.log('✨ [FORMAT] Response is not a string, converting...', typeof response);
+      response = String(response);
+    }
+    
     console.log('✨ [FORMAT] Input response length:', response.length);
     console.log('✨ [FORMAT] Input response preview:', response.substring(0, 200));
     

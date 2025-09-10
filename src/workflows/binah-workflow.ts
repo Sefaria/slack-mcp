@@ -285,13 +285,29 @@ const callDeepAgentNode = async (state: SlackWorkflowState): Promise<Partial<Sla
         } else {
           // Fallback to last message content
           const lastMsg = result.messages[result.messages.length - 1];
-          response = lastMsg.content || response;
+          const lastContent = lastMsg.content;
+          if (typeof lastContent === 'string') {
+            response = lastContent;
+          } else if (Array.isArray(lastContent)) {
+            const textContent = lastContent.find((c: any) => c.type === 'text');
+            response = textContent?.text || response;
+          } else if (lastContent) {
+            response = String(lastContent);
+          }
           console.log(`⚠️ [DEEP-AGENT] No content parts found, using last message (${response.length} chars)`);
         }
       } else {
         // Fallback to last message if no potential response messages found
         const lastMsg = result.messages[result.messages.length - 1];
-        response = lastMsg.content || response;
+        const lastContent = lastMsg.content;
+        if (typeof lastContent === 'string') {
+          response = lastContent;
+        } else if (Array.isArray(lastContent)) {
+          const textContent = lastContent.find((c: any) => c.type === 'text');
+          response = textContent?.text || response;
+        } else if (lastContent) {
+          response = String(lastContent);
+        }
         console.log(`⚠️ [DEEP-AGENT] No potential response messages found, using last message (${response.length} chars)`);
       }
     }
