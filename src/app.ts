@@ -352,7 +352,17 @@ class SlackMCPApp {
         text_preview: event.text?.substring(0, 100)
       });
       
-      // Bot context now handled dynamically via bots.info API
+      // Resolve bot user ID dynamically for proper mention validation
+      let botUserId: string | undefined;
+      try {
+        const webClient = new (await import('@slack/web-api')).WebClient(bot.slackToken);
+        const result = await webClient.auth.test();
+        botUserId = result.user_id as string;
+        console.log(`🤖 [WORKFLOW] Resolved user ID for bot "${bot.name}": ${botUserId}`);
+      } catch (error) {
+        console.warn(`⚠️ [WORKFLOW] Failed to resolve user ID for bot "${bot.name}":`, error instanceof Error ? error.message : String(error));
+        botUserId = undefined;
+      }
       
       // Create bot-specific workflow instance
       const workflow = bot.workflowFactory();
@@ -370,10 +380,10 @@ class SlackMCPApp {
         formattedResponse: null,
         error: null,
         errorOccurred: false,
-        // Add bot context for validation (userId resolved dynamically via bots.info API)
+        // Add bot context for validation with resolved user ID
         botContext: {
           name: bot.name,
-          userId: undefined
+          userId: botUserId
         }
       };
 
