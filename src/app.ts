@@ -6,7 +6,6 @@ import { SlackMessageEvent } from './types';
 import { botRegistry, BotConfig } from './bot-registry';
 import { createBinaWorkflow } from './workflows/bina-workflow';
 import { createBinahWorkflow } from './workflows/binah-workflow';
-import { initializeServices } from './nodes';
 
 dotenv.config();
 
@@ -216,14 +215,9 @@ class SlackMCPApp {
   private async registerBot(config: BotConfig): Promise<void> {
     botRegistry.registerBot(config);
     
-    // Initialize services for this bot
-    initializeServices(
-      config.slackToken,
-      this.sharedConfig.ANTHROPIC_API_KEY,
-      this.sharedConfig.SEFARIA_MCP_URL
-    );
-
-    // Bot registration complete - user ID lookup handled dynamically via bots.info API
+    // Bot registration complete - services are initialized per-workflow with bot-specific tokens
+    // This prevents global service state conflicts between multiple bots
+    console.log(`✅ Bot "${config.name}" registered successfully`);
   }
 
   async initialize(): Promise<void> {
@@ -402,11 +396,20 @@ class SlackMCPApp {
         console.log(`🤖 [WORKFLOW] Resolved user ID for bot "${bot.name}": ${botUserId}`);
       } catch (error) {
         console.warn(`⚠️ [WORKFLOW] Failed to resolve user ID for bot "${bot.name}":`, error instanceof Error ? error.message : String(error));
-        botUserId = undefined;
+        
+        // Use fallback user IDs for testing/development
+        const fallbackUserIds = {
+          'bina': 'U090X3GGN93',
+          'binah': 'U09EBP618TW'
+        };
+        botUserId = fallbackUserIds[bot.name as keyof typeof fallbackUserIds];
+        if (botUserId) {
+          console.log(`🔄 [WORKFLOW] Using fallback user ID for bot "${bot.name}": ${botUserId}`);
+        }
       }
       
-      // Create bot-specific workflow instance
-      const workflow = bot.workflowFactory();
+      // Create bot-specific workflow instance with bot context
+      const workflow = bot.workflowFactory(bot.slackToken, this.sharedConfig.ANTHROPIC_API_KEY, this.sharedConfig.SEFARIA_MCP_URL);
       
       const initialState = {
         slackEvent: event,

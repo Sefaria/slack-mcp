@@ -4,7 +4,7 @@ export interface BotConfig {
   name: string;
   slackToken: string;
   signingSecret: string;
-  workflowFactory: () => any;
+  workflowFactory: (slackToken?: string, anthropicKey?: string, mcpUrl?: string) => any;
   description?: string;
 }
 

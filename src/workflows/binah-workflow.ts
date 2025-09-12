@@ -339,8 +339,16 @@ const binahNodes: WorkflowNodes = {
   handleErrorNode
 };
 
-export function createBinahWorkflow() {
+export function createBinahWorkflow(slackToken?: string, anthropicKey?: string, mcpUrl?: string) {
   console.log('🧠 Creating Binah deep research workflow...');
+  
+  // Initialize services for this specific workflow instance if parameters provided  
+  if (slackToken && anthropicKey && mcpUrl) {
+    const { initializeServices } = require('../nodes');
+    initializeServices(slackToken, anthropicKey, mcpUrl);
+    console.log('🔧 Binah workflow services initialized with bot-specific tokens');
+  }
+  
   return createBaseWorkflow(binahNodes);
 }
 
