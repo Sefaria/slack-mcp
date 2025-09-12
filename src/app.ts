@@ -298,6 +298,47 @@ class SlackMCPApp {
         return;
       }
 
+      // For bot-specific endpoints, add endpoint-specific mention validation
+      if (type === 'event_callback' && event?.type === 'message' && req.path.includes(`/${botName}`)) {
+        console.log(`🔍 [ENDPOINT-VALIDATION] Checking if message mentions bot "${botName}" for endpoint-specific processing`);
+        
+        // Check for common hardcoded user IDs as a fallback when API resolution fails
+        const fallbackUserIds = {
+          'bina': 'U090X3GGN93',
+          'binah': 'U09EBP618TW'
+        };
+        
+        let botUserId: string | undefined;
+        
+        // Try to resolve bot user ID dynamically
+        try {
+          const webClient = new (await import('@slack/web-api')).WebClient(bot.slackToken);
+          const result = await webClient.auth.test();
+          botUserId = result.user_id as string;
+          console.log(`✅ [ENDPOINT-VALIDATION] Resolved bot "${botName}" user ID: ${botUserId}`);
+        } catch (error) {
+          console.warn(`⚠️ [ENDPOINT-VALIDATION] Failed to resolve user ID for bot "${botName}":`, error instanceof Error ? error.message : String(error));
+          // Use fallback user ID for testing/development
+          botUserId = fallbackUserIds[botName as keyof typeof fallbackUserIds];
+          if (botUserId) {
+            console.log(`🔄 [ENDPOINT-VALIDATION] Using fallback user ID for bot "${botName}": ${botUserId}`);
+          }
+        }
+        
+        // Check if bot is mentioned in the message text
+        if (botUserId && event.text && !event.text.includes(`<@${botUserId}>`)) {
+          console.log(`⚠️ [ENDPOINT-VALIDATION] Bot "${botName}" (${botUserId}) not mentioned in message to /${botName} endpoint, skipping processing`);
+          res.status(200).send('OK');
+          return;
+        }
+        
+        if (botUserId) {
+          console.log(`✅ [ENDPOINT-VALIDATION] Bot "${botName}" (${botUserId}) is mentioned, proceeding with processing`);
+        } else {
+          console.warn(`⚠️ [ENDPOINT-VALIDATION] Unable to determine user ID for bot "${botName}", proceeding with processing (fallback behavior)`);
+        }
+      }
+
       // Handle message events
       if (type === 'event_callback' && event?.type === 'message') {
         console.log(`💬 Processing message event for bot "${botName}" with LangGraph:`, event);
