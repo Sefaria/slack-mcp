@@ -231,7 +231,7 @@ The application processes messages through an 8-node LangGraph workflow:
 
 ### MCP Integration
 Uses Claude Messages API MCP connector with:
-- Model: `claude-sonnet-4-20250514`
+- Model: `claude-sonnet-4-5-20250929`
 - MCP server configured as URL type with Sefaria endpoint
 - Enhanced system prompt with scholarly response guidelines:
   - Multilingual support (responds in user's language)

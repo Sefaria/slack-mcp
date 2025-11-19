@@ -235,7 +235,7 @@ describe('LangGraph Workflow Nodes', () => {
         if (needsFormatting) {
           // Call Claude Haiku for correction
           const correctionResponse = await mockClaudeClient.messages.create({
-            model: 'claude-3-5-haiku-20241022',
+            model: 'claude-haiku-4-5-20251001',
             max_tokens: 4000,
             temperature: 0,
             messages: [{ role: 'user', content: `Convert to Slack format: ${response}` }]
@@ -279,7 +279,7 @@ describe('LangGraph Workflow Nodes', () => {
       expect(result.slackValidatedResponse).toBe(expectedSlackFormatted.singleLink);
       expect(mockClaudeClient.messages.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          model: 'claude-3-5-haiku-20241022',
+          model: 'claude-haiku-4-5-20251001',
           messages: expect.arrayContaining([
             expect.objectContaining({
               role: 'user',

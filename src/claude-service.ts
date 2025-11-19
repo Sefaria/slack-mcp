@@ -13,7 +13,7 @@ export class ClaudeServiceImpl implements ClaudeService {
   async sendMessage(messages: ConversationMessage[], mcpServerUrl: string): Promise<string> {
     try {
       const requestPayload = {
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-5-20250929',
         max_tokens: 8000,
         temperature: 0.7,
         messages: messages.map(msg => ({
@@ -151,7 +151,7 @@ Be scholarly, intellectually honest, and academically rigorous while remaining h
         
         try {
           const followUpResponse = await this.client.messages.create({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-sonnet-4-5-20250929',
             max_tokens: 2000,
             temperature: 0.7,
             messages: followUpMessages.map(msg => ({
@@ -217,7 +217,7 @@ SLACK FORMATTING (use exactly as specified):
       console.log('🛠️ [CLAUDE-4-FORMAT] Input length:', response.length);
       
       const correctionResponse = await this.client.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-5-20250929',
         max_tokens: 12000,
         temperature: 0,
         messages: [{

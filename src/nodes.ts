@@ -584,7 +584,7 @@ async function getDynamicEmoji(text: string): Promise<string | null> {
     console.log('🎯 [EMOJI] Haiku client initialized:', !!haikuClient);
     
     const response = await haikuClient.messages.create({
-      model: 'claude-3-5-haiku-latest',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 10,
       temperature: 0.7,
       messages: [{
