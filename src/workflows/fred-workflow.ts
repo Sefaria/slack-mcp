@@ -10,7 +10,7 @@ import {
   initializeServices
 } from '../nodes';
 import { SlackWorkflowState } from '../graph-types';
-import Anthropic from '@anthropic-ai/sdk';
+import { TracedClaudeService } from '../traced-claude-service';
 
 // Fred's system prompt - focused on guiding users to sources rather than providing answers
 const FRED_SYSTEM_PROMPT = `You are a knowledgeable guide helping users explore the Jewish textual tradition through Sefaria's library. Your primary role is to connect people with original sources and support their direct engagement with texts—not to replace that engagement with your own answers.
@@ -95,24 +95,26 @@ RESPONSE REQUIREMENTS:
 • Begin responses directly with substantive content about the topic
 • FORBIDDEN PHRASES: "Let me search," "I'll gather," "Now let me," "I found," "Let me look," "I'll check," or any process descriptions`;
 
-// Fred-specific Claude service instance
-let fredClaudeClient: Anthropic | null = null;
-let fredMcpUrl: string | null = null;
+// Fred's traced Claude service instance
+let fredClaudeService: TracedClaudeService | null = null;
 
 function initializeFredServices(anthropicKey: string, mcpUrl: string) {
-  fredClaudeClient = new Anthropic({ apiKey: anthropicKey });
-  fredMcpUrl = mcpUrl;
-  console.log('🤖 Fred Claude client initialized');
+  fredClaudeService = new TracedClaudeService(
+    anthropicKey,
+    mcpUrl,
+    'fred', // Project name for LangSmith tracing
+    FRED_SYSTEM_PROMPT
+  );
+  console.log('🤖 Fred traced Claude service initialized');
 }
 
-// Fred-specific Claude call node with custom system prompt
+// Fred-specific Claude call node using traced service
 async function callFredClaudeNode(state: SlackWorkflowState): Promise<Partial<SlackWorkflowState>> {
   try {
-    console.log('🤖 [FRED-CLAUDE] Starting Fred Claude API call...');
+    console.log('🤖 [FRED-CLAUDE] Starting traced Claude API call...');
     console.log('🤖 [FRED-CLAUDE] Conversation context length:', state.conversationContext?.length || 0);
-    console.log('🤖 [FRED-CLAUDE] MCP URL:', fredMcpUrl);
 
-    if (!fredClaudeClient || !fredMcpUrl) {
+    if (!fredClaudeService) {
       console.error('🤖 [FRED-CLAUDE] ERROR: Fred services not initialized');
       return {
         errorOccurred: true,
@@ -124,100 +126,13 @@ async function callFredClaudeNode(state: SlackWorkflowState): Promise<Partial<Sl
       console.warn('🤖 [FRED-CLAUDE] WARNING: No conversation context provided');
     }
 
-    const requestPayload = {
-      model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 8000,
-      temperature: 0.7,
-      messages: (state.conversationContext || []).map(msg => ({
-        role: msg.role,
-        content: msg.content
-      })),
-      system: FRED_SYSTEM_PROMPT,
-      mcp_servers: [
-        {
-          type: 'url' as const,
-          url: fredMcpUrl,
-          name: 'sefaria'
-        }
-      ]
-    };
+    console.log('📤 [FRED-CLAUDE] Sending request to traced Claude service...');
+    const response = await fredClaudeService.sendMessage(state.conversationContext || []);
 
-    console.log('📤 [FRED-CLAUDE] Sending request to Claude...');
+    console.log('📥 [FRED-CLAUDE] Response received:', response.length, 'chars');
 
-    const response = await fredClaudeClient.messages.create(requestPayload as any, {
-      headers: {
-        'anthropic-beta': 'mcp-client-2025-04-04'
-      }
-    });
-
-    console.log('📥 [FRED-CLAUDE] Response received, processing content blocks...');
-
-    // Handle different response content types
-    let responseText = '';
-    const textBlocks: string[] = [];
-    const toolUses: any[] = [];
-    const toolResults: any[] = [];
-
-    for (const content of response.content) {
-      const contentAny = content as any;
-      if (content.type === 'text') {
-        responseText += content.text;
-        textBlocks.push(content.text);
-      } else if (contentAny.type === 'mcp_tool_use') {
-        console.log('🔧 [FRED-CLAUDE] MCP tool used:', contentAny.name);
-        toolUses.push(contentAny);
-      } else if (contentAny.type === 'mcp_tool_result') {
-        console.log('🔧 [FRED-CLAUDE] MCP tool result received');
-        toolResults.push(contentAny);
-      }
-    }
-
-    console.log('📊 [FRED-CLAUDE] Response summary:', {
-      textBlocks: textBlocks.length,
-      toolUses: toolUses.length,
-      toolResults: toolResults.length,
-      finalResponseLength: responseText.length
-    });
-
-    if (!responseText || responseText.trim().length === 0) {
+    if (!response || response.trim().length === 0) {
       console.error('🤖 [FRED-CLAUDE] ERROR: Empty response from Claude');
-
-      // Try follow-up call to synthesize results
-      console.log('🔄 [FRED-CLAUDE] Making follow-up call to synthesize results...');
-
-      const followUpMessages = [
-        ...(state.conversationContext || []),
-        { role: 'assistant' as const, content: '[Tool calls completed - data gathered from sources]' },
-        { role: 'user' as const, content: 'Please provide your final answer based on the sources you just consulted.' }
-      ];
-
-      try {
-        const followUpResponse = await fredClaudeClient.messages.create({
-          model: 'claude-sonnet-4-5-20250929',
-          max_tokens: 8000,
-          temperature: 0.7,
-          messages: followUpMessages.map(msg => ({
-            role: msg.role,
-            content: msg.content
-          })),
-          system: FRED_SYSTEM_PROMPT
-        } as any);
-
-        let followUpText = '';
-        for (const content of followUpResponse.content) {
-          if (content.type === 'text') {
-            followUpText += content.text;
-          }
-        }
-
-        if (followUpText && followUpText.trim().length > 0) {
-          console.log('✅ [FRED-CLAUDE] Follow-up response successful');
-          return { claudeResponse: followUpText };
-        }
-      } catch (followUpError) {
-        console.error('❌ [FRED-CLAUDE] Follow-up call failed:', followUpError);
-      }
-
       return {
         errorOccurred: true,
         error: 'Claude returned empty response'
@@ -226,7 +141,7 @@ async function callFredClaudeNode(state: SlackWorkflowState): Promise<Partial<Sl
 
     console.log('🤖 [FRED-CLAUDE] Claude call completed successfully');
     return {
-      claudeResponse: responseText
+      claudeResponse: response
     };
   } catch (error) {
     console.error('❌ [FRED-CLAUDE] Claude service error:', error);
@@ -239,12 +154,12 @@ async function callFredClaudeNode(state: SlackWorkflowState): Promise<Partial<Sl
   }
 }
 
-// Fred-specific workflow nodes
+// Fred-specific workflow nodes (using traced Claude call)
 const fredNodes: WorkflowNodes = {
   validateMessageNode,
   sendAcknowledgmentNode,
   fetchContextNode,
-  callClaudeNode: callFredClaudeNode, // Use Fred's custom Claude node
+  callClaudeNode: callFredClaudeNode, // Use Fred's traced Claude node
   validateSlackFormattingNode,
   formatResponseNode,
   sendResponseNode,
@@ -252,16 +167,25 @@ const fredNodes: WorkflowNodes = {
 };
 
 export function createFredWorkflow(slackToken?: string, anthropicKey?: string, mcpUrl?: string) {
-  console.log('🤖 Creating Fred workflow...');
+  console.log('🤖 Creating Fred workflow with LangSmith tracing...');
 
   // Initialize services for this specific workflow instance
   if (slackToken && anthropicKey && mcpUrl) {
     // Initialize shared services for Slack operations
     initializeServices(slackToken, anthropicKey, mcpUrl);
-    // Initialize Fred-specific Claude service
+    // Initialize Fred-specific traced Claude service
     initializeFredServices(anthropicKey, mcpUrl);
     console.log('🔧 Fred workflow services initialized with bot-specific tokens');
   }
 
   return createBaseWorkflow(fredNodes);
+}
+
+// Cleanup function for graceful shutdown
+export async function cleanupFredWorkflow(): Promise<void> {
+  if (fredClaudeService) {
+    await fredClaudeService.cleanup();
+    fredClaudeService = null;
+    console.log('🧹 Fred workflow cleanup completed');
+  }
 }

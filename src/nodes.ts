@@ -3,24 +3,32 @@ import { SlackWorkflowState } from './graph-types';
 import { SlackHandlerImpl } from './slack-handler';
 import { ClaudeServiceImpl } from './claude-service';
 import { SlackMessageEvent, ConversationMessage } from './types';
-import Anthropic from '@anthropic-ai/sdk';
+import { ChatAnthropic } from '@langchain/anthropic';
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 
 // Service instances - better to inject these
 let slackClient: WebClient;
 let claudeService: ClaudeServiceImpl;
 let botUserId: string = '';
-let haikuClient: Anthropic;
+let haikuModel: ChatAnthropic;
 let isCLIMode: boolean = false;
 
 export function initializeServices(
-  slackToken: string, 
-  anthropicKey: string, 
+  slackToken: string,
+  anthropicKey: string,
   mcpUrl: string
 ) {
   slackClient = new WebClient(slackToken);
   claudeService = new ClaudeServiceImpl(anthropicKey, mcpUrl);
-  haikuClient = new Anthropic({ apiKey: anthropicKey });
-  
+
+  // Initialize traced Haiku model for emoji selection
+  haikuModel = new ChatAnthropic({
+    model: 'claude-haiku-4-5-20251001',
+    temperature: 0.7,
+    maxTokens: 10,
+    anthropicApiKey: anthropicKey,
+  });
+
   // Initialize bot user ID
   slackClient.auth.test().then(result => {
     botUserId = result.user_id as string;
@@ -33,14 +41,21 @@ export function initializeServices(
 // CLI-specific initialization that sets a mock bot user ID
 export function initializeServicesForCLI(
   botName: string,
-  anthropicKey: string, 
+  anthropicKey: string,
   mcpUrl: string
 ) {
   // Use a mock WebClient for CLI mode (won't actually call Slack API)
   slackClient = new WebClient('mock-token');
   claudeService = new ClaudeServiceImpl(anthropicKey, mcpUrl);
-  haikuClient = new Anthropic({ apiKey: anthropicKey });
-  
+
+  // Initialize traced Haiku model for emoji selection
+  haikuModel = new ChatAnthropic({
+    model: 'claude-haiku-4-5-20251001',
+    temperature: 0.7,
+    maxTokens: 10,
+    anthropicApiKey: anthropicKey,
+  });
+
   // Set CLI mode flag and predictable bot user ID
   isCLIMode = true;
   botUserId = `U${botName.toUpperCase()}123456`;
@@ -551,7 +566,7 @@ async function shouldProcessMessage(event: SlackMessageEvent, contextBotUserId?:
 }
 
 async function getAcknowledgmentEmoji(text: string): Promise<string> {
-  console.log('🔥 [DEBUG] getAcknowledgmentEmoji called, haikuClient exists:', !!haikuClient);
+  console.log('🔥 [DEBUG] getAcknowledgmentEmoji called, haikuModel exists:', !!haikuModel);
   try {
     console.log('👍 [ACK] Starting emoji selection for text:', text.substring(0, 100));
     
@@ -581,37 +596,63 @@ async function getAcknowledgmentEmoji(text: string): Promise<string> {
 async function getDynamicEmoji(text: string): Promise<string | null> {
   try {
     console.log('🎯 [EMOJI] Requesting dynamic emoji for text:', text.substring(0, 100));
-    console.log('🎯 [EMOJI] Haiku client initialized:', !!haikuClient);
-    
-    const response = await haikuClient.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 10,
-      temperature: 0.7,
-      messages: [{
-        role: 'user',
-        content: `Return just a single valid Slack emoji name (without colons) that relates to the TOPIC of this Jewish text question. Be topical and specific. Only use "thinking_face" if the question is specifically about thought, consideration, or contemplation itself: "${text.substring(0, 200)}"`
-      }],
-      system: 'You are a playful emoji selector for Jewish text discussions. Return ONLY a valid emoji name without colons. Be topical and fun:\n\n- Sabbath questions: candle, star\n- Prayer/worship: pray, raised_hands\n- Torah/study: books, open_book, memo\n- Talmud/law: balance_scale, memo\n- Ethics/morality: heart, dove_of_peace\n- History: hourglass, classical_building\n- Holidays: tada, sparkles\n- Food/kashrut: cheese, fork_and_knife, herb, bread\n- Marriage/family: ring, house\n- Death/mourning: wilted_flower, broken_heart\n- Philosophy: bulb, question\n- Mysticism: crystal_ball, sparkles\n- Temple: classical_building, fire\n- Money/charity: coin, handshake\n- Countries: flag-ir (Iran), flag-il (Israel), etc.\n- AI/technology: robot_face, computer\n\nBe playful and creative! Examples:\n- Food questions → cheese, bread, wine_glass\n- Iran questions → flag-ir\n- AI questions → robot_face\n- England questions → flag-gb\n\nONLY use thinking_face for questions about thought/contemplation itself.'
+    console.log('🎯 [EMOJI] Haiku model initialized:', !!haikuModel);
+
+    const systemPrompt = `You are a playful emoji selector for Jewish text discussions. Return ONLY a valid emoji name without colons. Be topical and fun:
+
+- Sabbath questions: candle, star
+- Prayer/worship: pray, raised_hands
+- Torah/study: books, open_book, memo
+- Talmud/law: balance_scale, memo
+- Ethics/morality: heart, dove_of_peace
+- History: hourglass, classical_building
+- Holidays: tada, sparkles
+- Food/kashrut: cheese, fork_and_knife, herb, bread
+- Marriage/family: ring, house
+- Death/mourning: wilted_flower, broken_heart
+- Philosophy: bulb, question
+- Mysticism: crystal_ball, sparkles
+- Temple: classical_building, fire
+- Money/charity: coin, handshake
+- Countries: flag-ir (Iran), flag-il (Israel), etc.
+- AI/technology: robot_face, computer
+
+Be playful and creative! Examples:
+- Food questions → cheese, bread, wine_glass
+- Iran questions → flag-ir
+- AI questions → robot_face
+- England questions → flag-gb
+
+ONLY use thinking_face for questions about thought/contemplation itself.`;
+
+    const userPrompt = `Return just a single valid Slack emoji name (without colons) that relates to the TOPIC of this Jewish text question. Be topical and specific. Only use "thinking_face" if the question is specifically about thought, consideration, or contemplation itself: "${text.substring(0, 200)}"`;
+
+    const response = await haikuModel.invoke([
+      new SystemMessage(systemPrompt),
+      new HumanMessage(userPrompt)
+    ], {
+      tags: ['emoji-selection', 'haiku'],
+      metadata: { phase: 'emoji-selection' }
     });
 
-    console.log('🎯 [EMOJI] Haiku response content blocks:', response.content.length);
-    response.content.forEach((block, index) => {
-      console.log(`🎯 [EMOJI] Block ${index}:`, {
-        type: block.type,
-        text: block.type === 'text' ? block.text : undefined
-      });
-    });
+    console.log('🎯 [EMOJI] Haiku response received');
 
-    const emojiName = response.content[0]?.type === 'text' ? response.content[0].text.trim() : null;
+    // Extract text content from response
+    const emojiName = typeof response.content === 'string'
+      ? response.content.trim()
+      : Array.isArray(response.content)
+        ? (response.content.find((c: any) => c.type === 'text') as any)?.text?.trim()
+        : null;
+
     console.log('🎯 [EMOJI] Extracted emoji name:', JSON.stringify(emojiName));
-    
+
     if (emojiName && isValidEmoji(emojiName)) {
       console.log('🎯 [EMOJI] Emoji validation passed for:', emojiName);
       return emojiName;
     } else {
       console.log('🎯 [EMOJI] Emoji validation failed for:', emojiName, 'isValid:', emojiName ? isValidEmoji(emojiName) : 'null');
     }
-    
+
     return null;
   } catch (error) {
     console.error('🎯 [EMOJI] Failed to get dynamic emoji:', error);
