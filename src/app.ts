@@ -6,6 +6,7 @@ import { SlackMessageEvent } from './types';
 import { botRegistry, BotConfig } from './bot-registry';
 import { createBinaWorkflow } from './workflows/bina-workflow';
 import { createBinahWorkflow } from './workflows/binah-workflow';
+import { createFredWorkflow } from './workflows/fred-workflow';
 
 dotenv.config();
 
@@ -106,12 +107,14 @@ class SlackMCPApp {
   }
 
   private getWorkflowFactory(botName: string): () => any {
-    // For now, all bots use the same workflow, but this can be extended
+    // Map bot names to their specific workflow factories
     switch (botName) {
       case 'bina':
         return createBinaWorkflow;
       case 'binah':
         return createBinahWorkflow;
+      case 'fred':
+        return createFredWorkflow;
       default:
         console.warn(`⚠️ No specific workflow for bot "${botName}", using bina workflow`);
         return createBinaWorkflow;
