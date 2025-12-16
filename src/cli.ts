@@ -5,6 +5,7 @@ import { botRegistry, BotConfig } from './bot-registry';
 import { initializeServicesForCLI } from './nodes';
 import { createBinaWorkflow } from './workflows/bina-workflow';
 import { createBinahWorkflow } from './workflows/binah-workflow';
+import { createFredWorkflow } from './workflows/fred-workflow';
 
 dotenv.config();
 
@@ -107,6 +108,8 @@ class SlackMCPCLI {
         return createBinaWorkflow;
       case 'binah':
         return createBinahWorkflow;
+      case 'fred':
+        return createFredWorkflow;
       default:
         console.warn(`⚠️ No specific workflow for bot "${botName}", using bina workflow`);
         return createBinaWorkflow;
@@ -152,9 +155,13 @@ class SlackMCPCLI {
     try {
       // Create mock Slack event with bot name for validation
       const mockEvent = this.createMockSlackEvent(message, botName);
-      
-      // Create bot-specific workflow instance
-      const workflow = bot.workflowFactory();
+
+      // Create bot-specific workflow instance with config parameters
+      const workflow = bot.workflowFactory(
+        bot.slackToken,
+        this.config.ANTHROPIC_API_KEY,
+        this.config.SEFARIA_MCP_URL
+      );
       
       const initialState = {
         slackEvent: mockEvent,
