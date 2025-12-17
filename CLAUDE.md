@@ -259,7 +259,8 @@ Uses Claude Messages API MCP connector with:
 ## Development Notes
 
 ### TypeScript Configuration
-- Target: ES2020 with CommonJS modules
+- Target: ES2020 with NodeNext modules
+- Module resolution: NodeNext (required for LangChain 1.x)
 - Strict mode enabled
 - Output directory: `./dist`
 

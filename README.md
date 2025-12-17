@@ -68,7 +68,7 @@ The application uses **LangGraph** for orchestrating message processing through 
 
 ## Prerequisites
 
-- Node.js (v16 or higher)
+- Node.js (v20 or higher)
 - npm or yarn
 - Slack workspace with admin permissions
 - Anthropic API key with MCP beta access
