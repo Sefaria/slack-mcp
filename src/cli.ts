@@ -5,7 +5,7 @@ import { botRegistry, BotConfig } from './bot-registry';
 import { initializeServicesForCLI } from './nodes';
 import { createBinaWorkflow } from './workflows/bina-workflow';
 import { createBinahWorkflow } from './workflows/binah-workflow';
-import { createFredWorkflow } from './workflows/fred-workflow';
+import { createBetaWorkflow } from './workflows/beta-workflow';
 
 dotenv.config();
 
@@ -108,8 +108,8 @@ class SlackMCPCLI {
         return createBinaWorkflow;
       case 'binah':
         return createBinahWorkflow;
-      case 'fred':
-        return createFredWorkflow;
+      case 'beta':
+        return createBetaWorkflow;
       default:
         console.warn(`⚠️ No specific workflow for bot "${botName}", using bina workflow`);
         return createBinaWorkflow;

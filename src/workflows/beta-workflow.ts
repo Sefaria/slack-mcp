@@ -12,8 +12,8 @@ import {
 import { SlackWorkflowState } from '../graph-types';
 import { TracedClaudeService } from '../traced-claude-service';
 
-// Fred's system prompt - focused on guiding users to sources rather than providing answers
-const FRED_SYSTEM_PROMPT = `You are a knowledgeable guide helping users explore the Jewish textual tradition through Sefaria's library and the Jewish calendar through Hebcal. Use Sefaria for texts, commentaries, and source material. Use Hebcal for calendar information including holiday dates, Torah portions (parsha), candle lighting times, Hebrew dates, and zmanim. Your primary role is to connect people with original sources and support their direct engagement with texts—not to replace that engagement with your own answers.
+// Beta's system prompt - focused on guiding users to sources rather than providing answers
+const BETA_SYSTEM_PROMPT = `You are a knowledgeable guide helping users explore the Jewish textual tradition through Sefaria's library and the Jewish calendar through Hebcal. Use Sefaria for texts, commentaries, and source material. Use Hebcal for calendar information including holiday dates, Torah portions (parsha), candle lighting times, Hebrew dates, and zmanim. Your primary role is to connect people with original sources and support their direct engagement with texts—not to replace that engagement with your own answers.
 
 *Core approach:*
 
@@ -147,57 +147,57 @@ RESPONSE REQUIREMENTS:
 • Begin responses directly with substantive content about the topic
 • FORBIDDEN PHRASES: "Let me search," "I'll gather," "Now let me," "I found," "Let me look," "I'll check," or any process descriptions`;
 
-// Fred's traced Claude service instance
-let fredClaudeService: TracedClaudeService | null = null;
+// Beta's traced Claude service instance
+let betaClaudeService: TracedClaudeService | null = null;
 
-function initializeFredServices(anthropicKey: string, mcpUrl: string) {
-  fredClaudeService = new TracedClaudeService(
+function initializeBetaServices(anthropicKey: string, mcpUrl: string) {
+  betaClaudeService = new TracedClaudeService(
     anthropicKey,
     mcpUrl,
-    'fred', // Project name for LangSmith tracing
-    FRED_SYSTEM_PROMPT
+    'beta', // Project name for LangSmith tracing
+    BETA_SYSTEM_PROMPT
   );
-  console.log('🤖 Fred traced Claude service initialized');
+  console.log('🤖 Beta traced Claude service initialized');
 }
 
-// Fred-specific Claude call node using traced service
-async function callFredClaudeNode(state: SlackWorkflowState): Promise<Partial<SlackWorkflowState>> {
+// Beta-specific Claude call node using traced service
+async function callBetaClaudeNode(state: SlackWorkflowState): Promise<Partial<SlackWorkflowState>> {
   try {
-    console.log('🤖 [FRED-CLAUDE] Starting traced Claude API call...');
-    console.log('🤖 [FRED-CLAUDE] Conversation context length:', state.conversationContext?.length || 0);
+    console.log('🤖 [BETA-CLAUDE] Starting traced Claude API call...');
+    console.log('🤖 [BETA-CLAUDE] Conversation context length:', state.conversationContext?.length || 0);
 
-    if (!fredClaudeService) {
-      console.error('🤖 [FRED-CLAUDE] ERROR: Fred services not initialized');
+    if (!betaClaudeService) {
+      console.error('🤖 [BETA-CLAUDE] ERROR: Beta services not initialized');
       return {
         errorOccurred: true,
-        error: 'Fred services not initialized'
+        error: 'Beta services not initialized'
       };
     }
 
     if (!state.conversationContext || state.conversationContext.length === 0) {
-      console.warn('🤖 [FRED-CLAUDE] WARNING: No conversation context provided');
+      console.warn('🤖 [BETA-CLAUDE] WARNING: No conversation context provided');
     }
 
-    console.log('📤 [FRED-CLAUDE] Sending request to traced Claude service...');
-    const response = await fredClaudeService.sendMessage(state.conversationContext || []);
+    console.log('📤 [BETA-CLAUDE] Sending request to traced Claude service...');
+    const response = await betaClaudeService.sendMessage(state.conversationContext || []);
 
-    console.log('📥 [FRED-CLAUDE] Response received:', response.length, 'chars');
+    console.log('📥 [BETA-CLAUDE] Response received:', response.length, 'chars');
 
     if (!response || response.trim().length === 0) {
-      console.error('🤖 [FRED-CLAUDE] ERROR: Empty response from Claude');
+      console.error('🤖 [BETA-CLAUDE] ERROR: Empty response from Claude');
       return {
         errorOccurred: true,
         error: 'Claude returned empty response'
       };
     }
 
-    console.log('🤖 [FRED-CLAUDE] Claude call completed successfully');
+    console.log('🤖 [BETA-CLAUDE] Claude call completed successfully');
     return {
       claudeResponse: response
     };
   } catch (error) {
-    console.error('❌ [FRED-CLAUDE] Claude service error:', error);
-    console.error('❌ [FRED-CLAUDE] Error message:', error instanceof Error ? error.message : String(error));
+    console.error('❌ [BETA-CLAUDE] Claude service error:', error);
+    console.error('❌ [BETA-CLAUDE] Error message:', error instanceof Error ? error.message : String(error));
 
     return {
       errorOccurred: true,
@@ -206,38 +206,38 @@ async function callFredClaudeNode(state: SlackWorkflowState): Promise<Partial<Sl
   }
 }
 
-// Fred-specific workflow nodes (using traced Claude call)
-const fredNodes: WorkflowNodes = {
+// Beta-specific workflow nodes (using traced Claude call)
+const betaNodes: WorkflowNodes = {
   validateMessageNode,
   sendAcknowledgmentNode,
   fetchContextNode,
-  callClaudeNode: callFredClaudeNode, // Use Fred's traced Claude node
+  callClaudeNode: callBetaClaudeNode, // Use Beta's traced Claude node
   validateSlackFormattingNode,
   formatResponseNode,
   sendResponseNode,
   handleErrorNode
 };
 
-export function createFredWorkflow(slackToken?: string, anthropicKey?: string, mcpUrl?: string) {
-  console.log('🤖 Creating Fred workflow with LangSmith tracing...');
+export function createBetaWorkflow(slackToken?: string, anthropicKey?: string, mcpUrl?: string) {
+  console.log('🤖 Creating Beta workflow with LangSmith tracing...');
 
   // Initialize services for this specific workflow instance
   if (slackToken && anthropicKey && mcpUrl) {
     // Initialize shared services for Slack operations
     initializeServices(slackToken, anthropicKey, mcpUrl);
-    // Initialize Fred-specific traced Claude service
-    initializeFredServices(anthropicKey, mcpUrl);
-    console.log('🔧 Fred workflow services initialized with bot-specific tokens');
+    // Initialize Beta-specific traced Claude service
+    initializeBetaServices(anthropicKey, mcpUrl);
+    console.log('🔧 Beta workflow services initialized with bot-specific tokens');
   }
 
-  return createBaseWorkflow(fredNodes);
+  return createBaseWorkflow(betaNodes);
 }
 
 // Cleanup function for graceful shutdown
-export async function cleanupFredWorkflow(): Promise<void> {
-  if (fredClaudeService) {
-    await fredClaudeService.cleanup();
-    fredClaudeService = null;
-    console.log('🧹 Fred workflow cleanup completed');
+export async function cleanupBetaWorkflow(): Promise<void> {
+  if (betaClaudeService) {
+    await betaClaudeService.cleanup();
+    betaClaudeService = null;
+    console.log('🧹 Beta workflow cleanup completed');
   }
 }
