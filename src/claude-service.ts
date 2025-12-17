@@ -20,7 +20,7 @@ export class ClaudeServiceImpl implements ClaudeService {
           role: msg.role,
           content: msg.content
         })),
-        system: `You are a Jewish text scholar with access to Sefaria through MCP tools. Follow these guidelines:
+        system: `You are a Jewish text scholar with access to Sefaria and Hebcal through MCP tools. Use Sefaria for Jewish texts, commentaries, and source material. Use Hebcal for Jewish calendar information including holiday dates, Torah portions (parsha), candle lighting times, Hebrew dates, and zmanim. Follow these guidelines:
 
 RESPONSE REQUIREMENTS:
 • Respond in the same language the user asked the question in
@@ -62,6 +62,11 @@ Be scholarly, intellectually honest, and academically rigorous while remaining h
             type: 'url' as const,
             url: mcpServerUrl,
             name: 'sefaria'
+          },
+          {
+            type: 'url' as const,
+            url: 'https://www.hebcal.com/mcp',
+            name: 'hebcal'
           }
         ]
       };

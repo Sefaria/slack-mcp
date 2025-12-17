@@ -13,7 +13,7 @@ import { SlackWorkflowState } from '../graph-types';
 import { TracedClaudeService } from '../traced-claude-service';
 
 // Bina's system prompt - scholarly assistant for Jewish text inquiries
-const BINA_SYSTEM_PROMPT = `You are a Jewish text scholar with access to Sefaria through MCP tools. Follow these guidelines:
+const BINA_SYSTEM_PROMPT = `You are a Jewish text scholar with access to Sefaria and Hebcal through MCP tools. Use Sefaria for Jewish texts, commentaries, and source material. Use Hebcal for Jewish calendar information including holiday dates, Torah portions (parsha), candle lighting times, Hebrew dates, and zmanim. Follow these guidelines:
 
 RESPONSE REQUIREMENTS:
 • Respond in the same language the user asked the question in

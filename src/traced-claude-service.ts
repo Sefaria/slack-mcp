@@ -43,11 +43,15 @@ export class TracedClaudeService {
     console.log(`🔧 Initializing MCP client for ${this.projectName}...`);
 
     try {
-      // Configure Sefaria MCP server
+      // Configure MCP servers (Sefaria for texts, Hebcal for calendar)
       this.mcpClient = new MultiServerMCPClient({
         mcpServers: {
           'sefaria': {
             url: this.mcpServerUrl,
+            transport: 'http'
+          },
+          'hebcal': {
+            url: 'https://www.hebcal.com/mcp',
             transport: 'http'
           }
         }

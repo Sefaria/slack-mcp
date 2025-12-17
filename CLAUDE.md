@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a multi-bot Slack platform that integrates Claude LLM with Sefaria's Jewish text database through MCP (Model Context Protocol). The platform hosts multiple specialized bots that respond to mentions in Slack channels and provide scholarly responses about Jewish texts using Claude's API with MCP server access.
+This is a multi-bot Slack platform that integrates Claude LLM with Sefaria's Jewish text database and Hebcal's Jewish calendar API through MCP (Model Context Protocol). The platform hosts multiple specialized bots that respond to mentions in Slack channels and provide scholarly responses about Jewish texts and calendar information using Claude's API with MCP server access.
 
 ### Multi-Bot Architecture
 The platform supports multiple bots with different personalities and specializations:
@@ -231,7 +231,9 @@ The application processes messages through an 8-node LangGraph workflow:
 ### MCP Integration
 Uses Claude Messages API MCP connector with:
 - Model: `claude-sonnet-4-5-20250929`
-- MCP server configured as URL type with Sefaria endpoint
+- MCP servers configured as URL type:
+  - **Sefaria** (`SEFARIA_MCP_URL` env var): Jewish texts, commentaries, and source material
+  - **Hebcal** (`https://www.hebcal.com/mcp`): Jewish calendar, holiday dates, Torah portions, candle lighting times, Hebrew dates, and zmanim
 - Enhanced system prompt with scholarly response guidelines:
   - Multilingual support (responds in user's language)
   - User intent awareness (brief vs comprehensive responses)
@@ -271,6 +273,7 @@ Uses Claude Messages API MCP connector with:
 ### Testing Requirements
 The app requires external services to function:
 - Sefaria MCP server running on configured URL (typically ngrok tunnel)
+- Hebcal MCP server (public at https://www.hebcal.com/mcp)
 - Valid Slack app with proper OAuth tokens
 - Anthropic API access with MCP beta features enabled
 

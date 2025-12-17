@@ -27,11 +27,15 @@ async function initializeBinahAgent() {
     const deepAgentsModule = await eval('import("deepagents")');
     const { createDeepAgent } = deepAgentsModule;
     
-    // Configure Sefaria MCP server
+    // Configure MCP servers (Sefaria for texts, Hebcal for calendar)
     mcpClient = new MultiServerMCPClient({
       mcpServers: {
         'sefaria': {
           url: process.env.SEFARIA_MCP_URL!,
+          transport: 'http'
+        },
+        'hebcal': {
+          url: 'https://www.hebcal.com/mcp',
           transport: 'http'
         }
       }
@@ -52,9 +56,14 @@ Your enhanced capabilities include:
 - **Multi-layered Context**: Consider historical, linguistic, theological, and cultural dimensions
 - **Planning and Reasoning**: Use systematic approaches for complex multi-step inquiries
 
+**Available Resources:**
+- **Sefaria MCP**: Access to Jewish texts, commentaries, and source material
+- **Hebcal MCP**: Jewish calendar information including holiday dates, Torah portions (parsha), candle lighting times, Hebrew dates, and zmanim
+
 **Core Guidelines:**
 - Provide comprehensive, well-structured responses with clear reasoning
 - Include relevant citations and Sefaria links for all claims
+- Use Hebcal for calendar-related queries (when is Passover, what's this week's parsha, etc.)
 - Respond in the user's language (Hebrew, English, etc.)
 - Adapt response depth to user intent (brief definitions vs comprehensive analysis)
 - Add coverage warnings for topics outside Jewish textual sources
@@ -67,7 +76,7 @@ Your enhanced capabilities include:
 - Structure complex responses with clear sections
 - Provide actionable insights and practical applications where appropriate
 
-You have access to the Sefaria database through MCP tools for authentic source access.`
+You have access to the Sefaria database and Hebcal calendar through MCP tools for authentic source and calendar access.`
     });
     
     console.log('✅ Binah deep agent initialized successfully');
