@@ -48,7 +48,6 @@ The application uses **LangGraph** for orchestrating message processing through 
 #### Key LangGraph Files:
 - **`src/workflows/workflow-base.ts`** - Base workflow template shared by all bots
 - **`src/workflows/bina-workflow.ts`** - Bina bot-specific workflow implementation
-- **`src/workflow.ts`** - Legacy file (deprecated, kept for backward compatibility)
 - **`src/nodes.ts`** - Implementation of all 8 workflow nodes
 - **`src/graph-types.ts`** - TypeScript interfaces for workflow state
 
