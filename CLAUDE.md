@@ -9,6 +9,7 @@ This is a multi-bot Slack platform that integrates Claude LLM with Sefaria's Jew
 ### Multi-Bot Architecture
 The platform supports multiple bots with different personalities and specializations:
 - **Bina** (בינה) - Main scholarly assistant for general Jewish text inquiries
+- **Beta** - Source-focused guide with Braintrust observability and prompt versioning (loads prompt from Braintrust project "On Site Agent")
 - **Binah** (בינה) - Deep research variant using DeepAgents for comprehensive analysis with enhanced planning, sub-agents, and multi-step reasoning capabilities
 - Each bot has its own Slack webhook endpoint but shares common infrastructure (Claude API, MCP connector)
 
@@ -73,6 +74,36 @@ The workflow uses `SlackWorkflowState` to track:
 5. **`src/claude-service.ts`** - Shared Claude API integration with MCP connector
 6. **`src/types.ts`** - TypeScript interfaces for all components
 
+### Braintrust Integration (Beta Bot)
+
+**Beta** bot uses **Braintrust** for observability and prompt versioning:
+
+#### Architecture Overview
+- **Automatic Tracing**: Uses `wrapAnthropic` for full observability of all Claude API calls
+- **Prompt Versioning**: Loads system prompts dynamically from Braintrust using `loadPrompt()`
+- **MCP Integration**: Native Anthropic SDK with `mcp_servers` for Sefaria and Hebcal access
+
+#### Key Components
+- **`src/braintrust-claude-service.ts`** - Braintrust-wrapped Claude service with prompt loading
+- **`src/workflows/beta-workflow.ts`** - Beta bot workflow using Braintrust service
+
+#### Braintrust Configuration
+```typescript
+// Project and prompt configuration
+const BRAINTRUST_PROJECT_NAME = 'On Site Agent';
+const BRAINTRUST_PROMPT_SLUG = 'core-8fbc';
+```
+
+#### Features
+- **Real-time Observability**: All LLM calls traced in Braintrust dashboard
+- **Version Control**: Prompts managed and versioned in Braintrust
+- **A/B Testing Ready**: Easy prompt iteration without code changes
+- **Cost Tracking**: Token usage and costs visible in Braintrust
+
+#### Dependencies
+- **braintrust** - Braintrust SDK for tracing and prompt management
+- **@anthropic-ai/sdk** - Native Anthropic SDK (wrapped by Braintrust)
+
 ### DeepAgents Integration (Binah Bot)
 
 **Binah** bot leverages the **DeepAgents** framework for sophisticated multi-step reasoning and planning capabilities:
@@ -126,9 +157,15 @@ ANTHROPIC_API_KEY=your-anthropic-key
 SEFARIA_MCP_URL=https://your-ngrok-url.ngrok-free.app
 PORT=3001
 
+# Braintrust configuration (required for Beta bot observability and prompt versioning)
+BRAINTRUST_API_KEY=your-braintrust-api-key
+
 # Bot-specific configurations (pattern: BOTNAME_SLACK_TOKEN, BOTNAME_SIGNING_SECRET)
 BINA_SLACK_TOKEN=xoxb-your-bina-bot-token
 BINA_SIGNING_SECRET=your-bina-signing-secret
+
+BETA_SLACK_TOKEN=xoxb-your-beta-bot-token
+BETA_SIGNING_SECRET=your-beta-signing-secret
 
 BINAH_SLACK_TOKEN=xoxb-your-binah-bot-token
 BINAH_SIGNING_SECRET=your-binah-signing-secret
