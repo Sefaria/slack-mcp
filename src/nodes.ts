@@ -3,14 +3,14 @@ import { SlackWorkflowState } from './graph-types';
 import { SlackHandlerImpl } from './slack-handler';
 import { ClaudeServiceImpl } from './claude-service';
 import { SlackMessageEvent, ConversationMessage } from './types';
-import { ChatAnthropic } from '@langchain/anthropic';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { getTracedAnthropicClient, tracedHaikuCall } from './braintrust-logger';
+import Anthropic from '@anthropic-ai/sdk';
 
 // Service instances - better to inject these
 let slackClient: WebClient;
 let claudeService: ClaudeServiceImpl;
 let botUserId: string = '';
-let haikuModel: ChatAnthropic;
+let tracedClient: Anthropic;
 let isCLIMode: boolean = false;
 
 export function initializeServices(
@@ -21,13 +21,8 @@ export function initializeServices(
   slackClient = new WebClient(slackToken);
   claudeService = new ClaudeServiceImpl(anthropicKey, mcpUrl);
 
-  // Initialize traced Haiku model for emoji selection
-  haikuModel = new ChatAnthropic({
-    model: 'claude-haiku-4-5-20251001',
-    temperature: 0.7,
-    maxTokens: 10,
-    anthropicApiKey: anthropicKey,
-  });
+  // Initialize Braintrust-traced Anthropic client for emoji selection and other Haiku calls
+  tracedClient = getTracedAnthropicClient(anthropicKey);
 
   // Initialize bot user ID
   slackClient.auth.test().then(result => {
@@ -48,13 +43,8 @@ export function initializeServicesForCLI(
   slackClient = new WebClient('mock-token');
   claudeService = new ClaudeServiceImpl(anthropicKey, mcpUrl);
 
-  // Initialize traced Haiku model for emoji selection
-  haikuModel = new ChatAnthropic({
-    model: 'claude-haiku-4-5-20251001',
-    temperature: 0.7,
-    maxTokens: 10,
-    anthropicApiKey: anthropicKey,
-  });
+  // Initialize Braintrust-traced Anthropic client for emoji selection and other Haiku calls
+  tracedClient = getTracedAnthropicClient(anthropicKey);
 
   // Set CLI mode flag and predictable bot user ID
   isCLIMode = true;
@@ -566,11 +556,11 @@ async function shouldProcessMessage(event: SlackMessageEvent, contextBotUserId?:
 }
 
 async function getAcknowledgmentEmoji(text: string): Promise<string> {
-  console.log('🔥 [DEBUG] getAcknowledgmentEmoji called, haikuModel exists:', !!haikuModel);
+  console.log('🔥 [DEBUG] getAcknowledgmentEmoji called, tracedClient exists:', !!tracedClient);
   try {
     console.log('👍 [ACK] Starting emoji selection for text:', text.substring(0, 100));
     
-    // Get dynamic emoji from Claude Haiku
+    // Get dynamic emoji from Claude Haiku (Braintrust-traced)
     const dynamicEmoji = await getDynamicEmoji(text);
     console.log('👍 [ACK] Dynamic emoji result:', dynamicEmoji);
     
@@ -596,7 +586,7 @@ async function getAcknowledgmentEmoji(text: string): Promise<string> {
 async function getDynamicEmoji(text: string): Promise<string | null> {
   try {
     console.log('🎯 [EMOJI] Requesting dynamic emoji for text:', text.substring(0, 100));
-    console.log('🎯 [EMOJI] Haiku model initialized:', !!haikuModel);
+    console.log('🎯 [EMOJI] Traced client initialized:', !!tracedClient);
 
     const systemPrompt = `You are a playful emoji selector for Jewish text discussions. Return ONLY a valid emoji name without colons. Be topical and fun:
 
@@ -627,30 +617,23 @@ ONLY use thinking_face for questions about thought/contemplation itself.`;
 
     const userPrompt = `Return just a single valid Slack emoji name (without colons) that relates to the TOPIC of this Jewish text question. Be topical and specific. Only use "thinking_face" if the question is specifically about thought, consideration, or contemplation itself: "${text.substring(0, 200)}"`;
 
-    const response = await haikuModel.invoke([
-      new SystemMessage(systemPrompt),
-      new HumanMessage(userPrompt)
-    ], {
-      tags: ['emoji-selection', 'haiku'],
-      metadata: { phase: 'emoji-selection' }
-    });
+    // Use Braintrust-traced Haiku call
+    const emojiName = await tracedHaikuCall(
+      tracedClient,
+      'emoji-selection',
+      systemPrompt,
+      userPrompt,
+      { maxTokens: 10, temperature: 0.7 }
+    );
 
-    console.log('🎯 [EMOJI] Haiku response received');
+    console.log('🎯 [EMOJI] Haiku response received:', emojiName);
 
-    // Extract text content from response
-    const emojiName = typeof response.content === 'string'
-      ? response.content.trim()
-      : Array.isArray(response.content)
-        ? (response.content.find((c: any) => c.type === 'text') as any)?.text?.trim()
-        : null;
-
-    console.log('🎯 [EMOJI] Extracted emoji name:', JSON.stringify(emojiName));
-
-    if (emojiName && isValidEmoji(emojiName)) {
-      console.log('🎯 [EMOJI] Emoji validation passed for:', emojiName);
-      return emojiName;
+    const trimmedEmoji = emojiName.trim();
+    if (trimmedEmoji && isValidEmoji(trimmedEmoji)) {
+      console.log('🎯 [EMOJI] Emoji validation passed for:', trimmedEmoji);
+      return trimmedEmoji;
     } else {
-      console.log('🎯 [EMOJI] Emoji validation failed for:', emojiName, 'isValid:', emojiName ? isValidEmoji(emojiName) : 'null');
+      console.log('🎯 [EMOJI] Emoji validation failed for:', trimmedEmoji, 'isValid:', trimmedEmoji ? isValidEmoji(trimmedEmoji) : 'null');
     }
 
     return null;

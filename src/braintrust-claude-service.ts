@@ -166,14 +166,17 @@ export class BraintrustClaudeService {
       });
 
       // Extract text content from response
-      let responseText = '';
+      // MCP responses can have multiple text blocks interspersed with tool calls.
+      // Claude often outputs partial text, calls tools, gets results, and repeats.
+      // The FINAL text block is typically the complete synthesized response.
+      const textBlocks: string[] = [];
       const toolUses: any[] = [];
       const toolResults: any[] = [];
 
       for (const content of response.content) {
         const contentAny = content as any;
         if (content.type === 'text') {
-          responseText += content.text;
+          textBlocks.push(content.text);
         } else if (contentAny.type === 'mcp_tool_use') {
           console.log('🔧 [BRAINTRUST] MCP tool used:', contentAny.name);
           toolUses.push(contentAny);
@@ -184,10 +187,26 @@ export class BraintrustClaudeService {
       }
 
       console.log('📊 [BRAINTRUST] Response summary:', {
-        textLength: responseText.length,
+        textBlocks: textBlocks.length,
         toolUses: toolUses.length,
         toolResults: toolResults.length
       });
+
+      // Use the longest text block (typically the final complete response)
+      // This handles cases where Claude outputs partial text before tool calls
+      let responseText = '';
+      if (textBlocks.length > 0) {
+        // Find the longest text block - this is usually the final synthesized response
+        responseText = textBlocks.reduce((longest, current) => 
+          current.length > longest.length ? current : longest, '');
+        
+        console.log(`📝 [BRAINTRUST] Selected longest text block (${responseText.length} chars) from ${textBlocks.length} blocks`);
+        
+        // Log if there were multiple blocks (indicates tool-use pattern)
+        if (textBlocks.length > 1) {
+          console.log('📝 [BRAINTRUST] Text block lengths:', textBlocks.map(b => b.length));
+        }
+      }
 
       // Handle empty or incomplete response - try follow-up synthesis
       // Check for incomplete responses that contain raw tool invocation XML

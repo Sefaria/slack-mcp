@@ -11,11 +11,23 @@ import {
 } from '../nodes';
 import { SlackWorkflowState } from '../graph-types';
 import { BraintrustClaudeService } from '../braintrust-claude-service';
+import { traced, initLogger } from 'braintrust';
 
 // Beta's Claude service instance with Braintrust observability and prompt versioning
 let betaClaudeService: BraintrustClaudeService | null = null;
+let braintrustInitialized = false;
 
 function initializeBetaServices(anthropicKey: string, mcpUrl: string) {
+  // Initialize Braintrust logger once for the project
+  if (!braintrustInitialized) {
+    initLogger({
+      projectName: 'On Site Agent',
+      apiKey: process.env.BRAINTRUST_API_KEY,
+    });
+    braintrustInitialized = true;
+    console.log('🧠 Beta Braintrust logger initialized');
+  }
+
   betaClaudeService = new BraintrustClaudeService(
     anthropicKey,
     mcpUrl,
@@ -94,7 +106,49 @@ export function createBetaWorkflow(slackToken?: string, anthropicKey?: string, m
     console.log('🔧 Beta workflow services initialized with bot-specific tokens');
   }
 
-  return createBaseWorkflow(betaNodes);
+  const baseWorkflow = createBaseWorkflow(betaNodes);
+
+  // Return a traced wrapper that captures the entire workflow execution
+  return {
+    invoke: async (initialState: SlackWorkflowState) => {
+      return traced(
+        async (span) => {
+          const event = initialState.slackEvent;
+
+          console.log('🧠 [BETA-TRACE] Starting traced workflow execution...');
+          
+          // Execute the actual workflow
+          const result = await baseWorkflow.invoke(initialState);
+          
+          // Extract the cleaned user query from conversationContext (same text sent to Claude)
+          const userQuery = result.conversationContext?.find((msg: any) => msg.role === 'user')?.content || event.text || '';
+          
+          // Log input and output together after workflow completes
+          span.log({
+            input: userQuery,
+            output: result.formattedResponse || result.claudeResponse || null,
+            metadata: {
+              bot: 'beta',
+              user: event.user,
+              channel: event.channel,
+              thread_ts: event.thread_ts || event.ts,
+              message_ts: event.ts,
+              shouldProcess: result.shouldProcess,
+              errorOccurred: result.errorOccurred,
+              error: result.error,
+            },
+          });
+
+          console.log('🧠 [BETA-TRACE] Traced workflow execution completed');
+          
+          return result;
+        },
+        {
+          name: 'beta-slack-workflow',
+        }
+      );
+    },
+  };
 }
 
 // Cleanup function for graceful shutdown

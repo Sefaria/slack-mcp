@@ -10,6 +10,8 @@ import {
   handleErrorNode
 } from '../nodes';
 import { SlackWorkflowState } from '../graph-types';
+import { traced } from 'braintrust';
+import { initializeBraintrust } from '../braintrust-logger';
 
 // Deep agent instance (cached)
 let binahAgent: any = null;
@@ -349,7 +351,10 @@ const binahNodes: WorkflowNodes = {
 };
 
 export function createBinahWorkflow(slackToken?: string, anthropicKey?: string, mcpUrl?: string) {
-  console.log('🧠 Creating Binah deep research workflow...');
+  console.log('🧠 Creating Binah deep research workflow with Braintrust observability...');
+  
+  // Initialize Braintrust logger
+  initializeBraintrust();
   
   // Initialize services for this specific workflow instance if parameters provided  
   if (slackToken && anthropicKey && mcpUrl) {
@@ -358,7 +363,49 @@ export function createBinahWorkflow(slackToken?: string, anthropicKey?: string, 
     console.log('🔧 Binah workflow services initialized with bot-specific tokens');
   }
   
-  return createBaseWorkflow(binahNodes);
+  const baseWorkflow = createBaseWorkflow(binahNodes);
+
+  // Return a traced wrapper that captures the entire workflow execution
+  return {
+    invoke: async (initialState: SlackWorkflowState) => {
+      return traced(
+        async (span) => {
+          const event = initialState.slackEvent;
+
+          console.log('🧠 [BINAH-TRACE] Starting traced workflow execution...');
+          
+          // Execute the actual workflow
+          const result = await baseWorkflow.invoke(initialState);
+          
+          // Extract the cleaned user query from conversationContext
+          const userQuery = result.conversationContext?.find((msg: any) => msg.role === 'user')?.content || event.text || '';
+          
+          // Log input and output
+          span.log({
+            input: userQuery,
+            output: result.formattedResponse || result.claudeResponse || null,
+            metadata: {
+              bot: 'binah',
+              user: event.user,
+              channel: event.channel,
+              thread_ts: event.thread_ts || event.ts,
+              message_ts: event.ts,
+              shouldProcess: result.shouldProcess,
+              errorOccurred: result.errorOccurred,
+              error: result.error,
+            },
+          });
+
+          console.log('🧠 [BINAH-TRACE] Traced workflow execution completed');
+          
+          return result;
+        },
+        {
+          name: 'binah-slack-workflow',
+        }
+      );
+    },
+  };
 }
 
 // Cleanup function for graceful shutdown

@@ -1,12 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { ClaudeService, ConversationMessage, MCPServerConfig } from './types';
+import { getTracedAnthropicClient } from './braintrust-logger';
 
 export class ClaudeServiceImpl implements ClaudeService {
   private client: Anthropic;
   private mcpServerUrl: string;
 
   constructor(apiKey: string, mcpServerUrl: string) {
-    this.client = new Anthropic({ apiKey });
+    // Use Braintrust-wrapped client for automatic tracing
+    this.client = getTracedAnthropicClient(apiKey);
     this.mcpServerUrl = mcpServerUrl;
   }
 
