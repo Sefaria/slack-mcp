@@ -1,6 +1,6 @@
 # Sefaria Slack MCP Multi-Bot Platform
 
-A multi-bot Slack platform that integrates Claude LLM with Sefaria's Jewish text database through MCP (Model Context Protocol). The platform supports multiple specialized bots, each with their own personality and capabilities, all sharing common infrastructure.
+A multi-bot Slack platform that integrates Claude LLM with Sefaria's Jewish text database and Hebcal's Jewish calendar through MCP (Model Context Protocol). The platform supports multiple specialized bots, each with their own personality and capabilities, all sharing common infrastructure.
 
 ## Features
 
@@ -13,6 +13,7 @@ A multi-bot Slack platform that integrates Claude LLM with Sefaria's Jewish text
 ### Bot Capabilities
 - **Smart Message Processing**: Responds to @mentions and follows thread conversations
 - **Scholarly Responses**: Provides comprehensive answers about Jewish texts with proper citations
+- **Jewish Calendar Integration**: Access to Hebcal for calendar queries, holidays, and zmanim
 - **Attack Detection**: Identifies and gracefully handles disingenuous or malicious questions
 - **Multilingual Support**: Responds based on user's language
 - **Source Validation**: All responses include Sefaria citations with proper link formatting
@@ -21,6 +22,7 @@ A multi-bot Slack platform that integrates Claude LLM with Sefaria's Jewish text
 ### Current Bots
 - **Bina** (בינה): Main scholarly assistant for general Jewish text inquiries
 - **Binah** (בינה): Deep research variant for comprehensive analysis (planned)
+- **Beta**: Experimental bot with Braintrust observability and stored prompt versioning
 
 ## Architecture
 
@@ -34,7 +36,7 @@ The application uses **LangGraph** for orchestrating message processing through 
 1. **validate** - Validates message, checks mentions, determines processing need
 2. **acknowledge** - Sends contextual emoji reaction (🤔, 👀, 🙏, 📜, 📚)
 3. **fetchContext** - Retrieves thread history, builds conversation context
-4. **callClaude** - Calls Claude API with MCP integration for Sefaria access
+4. **callClaude** - Calls Claude API with MCP integration for Sefaria and Hebcal access
 5. **validateSlackFormatting** - Checks if response needs formatting fixes
 6. **formatResponse** - Applies final formatting, coverage warnings
 7. **sendResponse** - Posts formatted response to Slack
@@ -43,6 +45,7 @@ The application uses **LangGraph** for orchestrating message processing through 
 #### Key LangGraph Files:
 - **`src/workflows/workflow-base.ts`** - Base workflow template shared by all bots
 - **`src/workflows/bina-workflow.ts`** - Bina bot-specific workflow implementation
+- **`src/workflows/beta-workflow.ts`** - Beta bot with Braintrust observability and traced Claude calls
 - **`src/nodes.ts`** - Implementation of all 8 workflow nodes
 - **`src/graph-types.ts`** - TypeScript interfaces for workflow state
 
@@ -53,7 +56,23 @@ The application uses **LangGraph** for orchestrating message processing through 
 - **`src/workflows/`** - Bot-specific workflow implementations
 - **`src/slack-handler.ts`** - Fallback message processing (legacy compatibility)
 - **`src/claude-service.ts`** - Shared Claude API integration with MCP connector
+- **`src/braintrust-claude-service.ts`** - Claude service with Braintrust prompt versioning and observability
+- **`src/braintrust-logger.ts`** - Braintrust tracing utilities for workflow-level observability
 - **`src/types.ts`** - TypeScript interfaces for all components
+
+### Observability with Braintrust
+
+The platform uses **Braintrust** for production observability and prompt management:
+
+- **Prompt Versioning**: System prompts stored in Braintrust for version control and A/B testing
+- **Traced Workflow Execution**: Complete workflow spans with input/output logging
+- **Nested Tracing**: Individual Claude calls traced within workflow spans
+- **Metadata Capture**: User, channel, thread, and error state logged per execution
+
+The Beta bot demonstrates full Braintrust integration:
+- Loads prompt from Braintrust slug `core-8fbc` in project `On Site Agent`
+- Wraps entire workflow in `traced()` for observability
+- Logs cleaned user input and final response for evaluation
 
 ### API Endpoints
 
@@ -64,6 +83,7 @@ The application uses **LangGraph** for orchestrating message processing through 
 **Available Bot Routes:**
 - `POST /slack/events/bina` - Bina bot endpoint
 - `POST /slack/events/binah` - Binah bot endpoint (when configured)
+- `POST /slack/events/beta` - Beta bot endpoint with Braintrust observability
 
 
 ## Prerequisites
@@ -74,6 +94,7 @@ The application uses **LangGraph** for orchestrating message processing through 
 - Anthropic API key with MCP beta access
 - Sefaria MCP server running (typically via ngrok tunnel)
 - LangGraph dependencies (@langchain/langgraph, @langchain/core)
+- Braintrust API key (for Beta bot observability and prompt versioning)
 
 ## Installation
 
@@ -110,6 +131,9 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 SEFARIA_MCP_URL=https://your-ngrok-url.ngrok-free.app
 PORT=3001
 
+# Braintrust configuration (required for Beta bot)
+BRAINTRUST_API_KEY=your-braintrust-api-key
+
 # Bot-specific configurations
 # Pattern: BOTNAME_SLACK_TOKEN and BOTNAME_SIGNING_SECRET
 
@@ -120,6 +144,10 @@ BINA_SIGNING_SECRET=your-bina-signing-secret
 # Binah bot (deep research variant)
 BINAH_SLACK_TOKEN=xoxb-your-binah-bot-token
 BINAH_SIGNING_SECRET=your-binah-signing-secret
+
+# Beta bot (Braintrust observability)
+BETA_SLACK_TOKEN=xoxb-your-beta-bot-token
+BETA_SIGNING_SECRET=your-beta-signing-secret
 ```
 
 #### Option 2: Legacy Single-Bot Configuration
@@ -174,9 +202,10 @@ This will return information about registered bots:
   "timestamp": "2024-01-01T00:00:00.000Z",
   "bots": [
     {"name": "bina", "description": null},
-    {"name": "binah", "description": null}
+    {"name": "binah", "description": null},
+    {"name": "beta", "description": null}
   ],
-  "botCount": 2
+  "botCount": 3
 }
 ```
 
@@ -198,9 +227,36 @@ The workflow uses `SlackWorkflowState` to track:
 - **Dynamic Emoji Selection** - Context-aware emoji reactions based on content analysis
 - **Comprehensive Error Handling** - Graceful degradation with fallback mechanisms
 - **Thread Context Management** - Conversation continuity across message threads
+- **Braintrust Tracing** (Beta bot) - Full workflow observability with input/output logging
+- **Stored Prompts** (Beta bot) - System prompts versioned in Braintrust for easy iteration
+- **MCP Tool Integration** - Sefaria (Jewish texts) and Hebcal (Jewish calendar) servers
 
 ### Testing
 The application includes comprehensive test coverage:
 - **Workflow Integration Tests** - End-to-end workflow validation
 - **Node-Level Tests** - Individual node function testing
 - **Service Integration Tests** - API integration and error handling
+
+## Braintrust Integration
+
+The Beta bot demonstrates production-ready observability with Braintrust:
+
+### Stored Prompts
+- System prompts are stored in Braintrust's prompt management system
+- Prompts are loaded dynamically at runtime via slug `core-8fbc`
+- Enables A/B testing and prompt iteration without code deployment
+- Fallback prompt available if Braintrust loading fails
+
+### Tracing & Observability
+- Entire workflow wrapped in `traced()` for complete span capture
+- Input (cleaned user query) and output (final response) logged per execution
+- Metadata includes: bot name, user, channel, thread info, error state
+- Nested spans for individual Claude API calls
+
+### Environment Setup
+```bash
+# Required for Beta bot
+BRAINTRUST_API_KEY=your-braintrust-api-key
+```
+
+Traces appear in the Braintrust dashboard under project "On Site Agent".
