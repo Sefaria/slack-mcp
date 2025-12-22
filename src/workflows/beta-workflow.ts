@@ -54,8 +54,30 @@ async function callBetaClaudeNode(state: SlackWorkflowState): Promise<Partial<Sl
       console.warn('🧠 [BETA-CLAUDE] WARNING: No conversation context provided');
     }
 
+    // Add current date prefix to the last user message
+    const conversationWithDate = (state.conversationContext || []).map((msg, index, arr) => {
+      // Find the last user message and prefix it with the current date
+      const isLastUserMessage = msg.role === 'user' && 
+        arr.slice(index + 1).every(m => m.role !== 'user');
+      
+      if (isLastUserMessage) {
+        const currentDate = new Date().toLocaleDateString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        });
+        console.log('🧠 [BETA-CLAUDE] Adding date prefix:', currentDate);
+        return {
+          ...msg,
+          content: `[Current date: ${currentDate}]\n\n${msg.content}`
+        };
+      }
+      return msg;
+    });
+
     console.log('📤 [BETA-CLAUDE] Sending request to Braintrust Claude service...');
-    const response = await betaClaudeService.sendMessage(state.conversationContext || []);
+    const response = await betaClaudeService.sendMessage(conversationWithDate);
 
     console.log('📥 [BETA-CLAUDE] Response received:', response.length, 'chars');
 
