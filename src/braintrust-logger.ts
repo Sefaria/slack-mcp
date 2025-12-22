@@ -35,7 +35,7 @@ export function getTracedAnthropicClient(apiKey: string): Anthropic {
     console.log('🧠 [BRAINTRUST] Wrapped Anthropic client created');
   }
 
-  return wrappedClient;
+  return wrappedClient!;
 }
 
 /**
@@ -50,7 +50,7 @@ export async function tracedCall<T>(
   initializeBraintrust();
 
   return traced(
-    async (span) => {
+    async (span: { log: (data: Record<string, unknown>) => void }) => {
       if (metadata) {
         span.log({ metadata });
       }
@@ -74,7 +74,7 @@ export async function tracedHaikuCall(
   const { maxTokens = 50, temperature = 0.7 } = options;
 
   return traced(
-    async (span) => {
+    async (span: { log: (data: Record<string, unknown>) => void }) => {
       span.log({
         input: userPrompt.substring(0, 200),
         metadata: { model: 'claude-haiku-4-5-20251001', spanName },
@@ -100,3 +100,4 @@ export async function tracedHaikuCall(
     { name: spanName }
   );
 }
+

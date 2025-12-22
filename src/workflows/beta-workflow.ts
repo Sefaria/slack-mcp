@@ -112,7 +112,7 @@ export function createBetaWorkflow(slackToken?: string, anthropicKey?: string, m
   return {
     invoke: async (initialState: SlackWorkflowState) => {
       return traced(
-        async (span) => {
+        async (span: { log: (data: Record<string, unknown>) => void }) => {
           const event = initialState.slackEvent;
 
           console.log('🧠 [BETA-TRACE] Starting traced workflow execution...');

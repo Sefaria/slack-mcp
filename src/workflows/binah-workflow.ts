@@ -369,7 +369,7 @@ export function createBinahWorkflow(slackToken?: string, anthropicKey?: string, 
   return {
     invoke: async (initialState: SlackWorkflowState) => {
       return traced(
-        async (span) => {
+        async (span: { log: (data: Record<string, unknown>) => void }) => {
           const event = initialState.slackEvent;
 
           console.log('🧠 [BINAH-TRACE] Starting traced workflow execution...');
