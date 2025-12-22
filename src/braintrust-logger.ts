@@ -1,11 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { wrapAnthropic, initLogger, traced } from 'braintrust';
+import { initLogger, traced } from 'braintrust';
 
 // Braintrust configuration
 const BRAINTRUST_PROJECT_NAME = 'On Site Agent';
 
 let initialized = false;
-let wrappedClient: Anthropic | null = null;
+let cachedClient: Anthropic | null = null;
 
 /**
  * Initialize Braintrust logging for the entire application.
@@ -24,18 +24,18 @@ export function initializeBraintrust(): void {
 }
 
 /**
- * Get a Braintrust-wrapped Anthropic client.
- * All calls through this client are automatically traced.
+ * Get an Anthropic client for use with Braintrust tracing.
+ * Note: Use the traced() wrapper at the workflow level for observability.
  */
 export function getTracedAnthropicClient(apiKey: string): Anthropic {
   initializeBraintrust();
 
-  if (!wrappedClient) {
-    wrappedClient = wrapAnthropic(new Anthropic({ apiKey }));
-    console.log('🧠 [BRAINTRUST] Wrapped Anthropic client created');
+  if (!cachedClient) {
+    cachedClient = new Anthropic({ apiKey });
+    console.log('🧠 [BRAINTRUST] Anthropic client created (use traced() for observability)');
   }
 
-  return wrappedClient!;
+  return cachedClient!;
 }
 
 /**

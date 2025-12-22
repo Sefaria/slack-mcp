@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { wrapAnthropic, initLogger, loadPrompt } from 'braintrust';
+import { initLogger, loadPrompt } from 'braintrust';
 import { ConversationMessage } from './types';
 
 // Braintrust configuration for the Beta bot
@@ -13,7 +13,7 @@ const FALLBACK_SYSTEM_PROMPT = `You are a knowledgeable guide helping users expl
  * BraintrustClaudeService - Claude service with Braintrust observability and prompt versioning
  * 
  * Features:
- * - Automatic tracing via wrapAnthropic for observability
+ * - Observability via traced() wrapper at workflow level
  * - Dynamic prompt loading from Braintrust for version control
  * - MCP tool integration for Sefaria and Hebcal
  */
@@ -39,10 +39,8 @@ export class BraintrustClaudeService {
       apiKey: process.env.BRAINTRUST_API_KEY,
     });
 
-    // Wrap the Anthropic client with Braintrust for automatic tracing
-    this.client = wrapAnthropic(
-      new Anthropic({ apiKey })
-    );
+    // Create Anthropic client (tracing handled at workflow level via traced())
+    this.client = new Anthropic({ apiKey });
 
     console.log(`🧠 [BRAINTRUST] Service created for project "${projectName}"`);
   }
@@ -352,3 +350,5 @@ ${response}`
     console.log(`🧹 [BRAINTRUST] Cleanup completed`);
   }
 }
+
+
