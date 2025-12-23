@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { initLogger, loadPrompt } from 'braintrust';
+import { initLogger, loadPrompt, traced } from 'braintrust';
 import { ConversationMessage } from './types';
 
 // Braintrust configuration for the Beta bot
@@ -111,123 +111,152 @@ export class BraintrustClaudeService {
 
     console.log(`🧠 [BRAINTRUST] Starting Claude call with ${messages.length} messages...`);
 
-    try {
-      const requestPayload = {
-        model: 'claude-sonnet-4-5-20250929',
-        max_tokens: 8000,
-        temperature: 0,
-        messages: messages.map(msg => ({
-          role: msg.role as 'user' | 'assistant',
-          content: msg.content
-        })),
-        system: this.systemPrompt!,
-        mcp_servers: [
-          {
-            type: 'url' as const,
-            url: this.mcpServerUrl,
-            name: 'sefaria'
-          },
-          {
-            type: 'url' as const,
-            url: 'https://www.hebcal.com/mcp',
-            name: 'hebcal'
+    // Wrap the LLM call in traced() for Braintrust observability
+    return traced(
+      async (span: { log: (data: Record<string, unknown>) => void }) => {
+        try {
+          const requestPayload = {
+            model: 'claude-sonnet-4-5-20250929',
+            max_tokens: 8000,
+            temperature: 0,
+            messages: messages.map(msg => ({
+              role: msg.role as 'user' | 'assistant',
+              content: msg.content
+            })),
+            system: this.systemPrompt!,
+            mcp_servers: [
+              {
+                type: 'url' as const,
+                url: this.mcpServerUrl,
+                name: 'sefaria'
+              },
+              {
+                type: 'url' as const,
+                url: 'https://www.hebcal.com/mcp',
+                name: 'hebcal'
+              }
+            ]
+          };
+
+          // Log input to Braintrust span
+          const userMessage = messages.find(m => m.role === 'user')?.content || '';
+          span.log({
+            input: userMessage,
+            metadata: {
+              model: 'claude-sonnet-4-5-20250929',
+              messageCount: messages.length,
+              systemPromptLength: this.systemPrompt?.length || 0,
+            },
+          });
+
+          console.log('📤 [BRAINTRUST] Sending request to Claude...');
+
+          const response = await this.client.messages.create(requestPayload as any, {
+            headers: {
+              'anthropic-beta': 'mcp-client-2025-04-04'
+            }
+          });
+
+          // Log response content blocks for debugging
+          console.log('📥 [BRAINTRUST] Response content blocks:');
+          response.content.forEach((block, index) => {
+            const blockAny = block as any;
+            console.log(`Block ${index}:`, {
+              type: block.type,
+              ...(block.type === 'text' && { 
+                text: block.text.substring(0, 200) + (block.text.length > 200 ? '...' : '') 
+              }),
+              ...(blockAny.type === 'mcp_tool_use' && { 
+                name: blockAny.name,
+                server_name: blockAny.server_name
+              }),
+              ...(blockAny.type === 'mcp_tool_result' && { 
+                tool_use_id: blockAny.tool_use_id,
+                is_error: blockAny.is_error
+              })
+            });
+          });
+
+          // Extract text content from response
+          // MCP responses can have multiple text blocks interspersed with tool calls.
+          // Claude often outputs partial text, calls tools, gets results, and repeats.
+          // The FINAL text block is typically the complete synthesized response.
+          const textBlocks: string[] = [];
+          const toolUses: any[] = [];
+          const toolResults: any[] = [];
+
+          for (const content of response.content) {
+            const contentAny = content as any;
+            if (content.type === 'text') {
+              textBlocks.push(content.text);
+            } else if (contentAny.type === 'mcp_tool_use') {
+              console.log('🔧 [BRAINTRUST] MCP tool used:', contentAny.name);
+              toolUses.push(contentAny);
+            } else if (contentAny.type === 'mcp_tool_result') {
+              console.log('🔧 [BRAINTRUST] MCP tool result received');
+              toolResults.push(contentAny);
+            }
           }
-        ]
-      };
 
-      console.log('📤 [BRAINTRUST] Sending request to Claude...');
+          console.log('📊 [BRAINTRUST] Response summary:', {
+            textBlocks: textBlocks.length,
+            toolUses: toolUses.length,
+            toolResults: toolResults.length
+          });
 
-      const response = await this.client.messages.create(requestPayload as any, {
-        headers: {
-          'anthropic-beta': 'mcp-client-2025-04-04'
+          // Use the longest text block (typically the final complete response)
+          // This handles cases where Claude outputs partial text before tool calls
+          let responseText = '';
+          if (textBlocks.length > 0) {
+            // Find the longest text block - this is usually the final synthesized response
+            responseText = textBlocks.reduce((longest, current) => 
+              current.length > longest.length ? current : longest, '');
+            
+            console.log(`📝 [BRAINTRUST] Selected longest text block (${responseText.length} chars) from ${textBlocks.length} blocks`);
+            
+            // Log if there were multiple blocks (indicates tool-use pattern)
+            if (textBlocks.length > 1) {
+              console.log('📝 [BRAINTRUST] Text block lengths:', textBlocks.map(b => b.length));
+            }
+          }
+
+          // Handle empty or incomplete response - try follow-up synthesis
+          // Check for incomplete responses that contain raw tool invocation XML
+          const hasIncompleteToolCall = responseText.includes('<invoke') || 
+                                         responseText.includes('<parameter') ||
+                                         responseText.includes('</invoke>');
+          
+          if (!responseText || responseText.trim().length === 0 || hasIncompleteToolCall) {
+            if (hasIncompleteToolCall) {
+              console.warn('⚠️ [BRAINTRUST] Response contains incomplete tool invocation XML, attempting synthesis...');
+            } else {
+              console.warn('⚠️ [BRAINTRUST] Empty response, attempting synthesis...');
+            }
+            const synthesized = await this.synthesizeResponse(messages);
+            span.log({ output: synthesized });
+            return synthesized;
+          }
+
+          // Log output to Braintrust span
+          span.log({
+            output: responseText,
+            metadata: {
+              toolUsesCount: toolUses.length,
+              toolResultsCount: toolResults.length,
+              responseLength: responseText.length,
+            },
+          });
+
+          console.log(`✅ [BRAINTRUST] Response received (${responseText.length} chars)`);
+          return responseText;
+
+        } catch (error) {
+          console.error('❌ [BRAINTRUST] Error in sendMessage:', error);
+          throw error;
         }
-      });
-
-      // Log response content blocks for debugging
-      console.log('📥 [BRAINTRUST] Response content blocks:');
-      response.content.forEach((block, index) => {
-        const blockAny = block as any;
-        console.log(`Block ${index}:`, {
-          type: block.type,
-          ...(block.type === 'text' && { 
-            text: block.text.substring(0, 200) + (block.text.length > 200 ? '...' : '') 
-          }),
-          ...(blockAny.type === 'mcp_tool_use' && { 
-            name: blockAny.name,
-            server_name: blockAny.server_name
-          }),
-          ...(blockAny.type === 'mcp_tool_result' && { 
-            tool_use_id: blockAny.tool_use_id,
-            is_error: blockAny.is_error
-          })
-        });
-      });
-
-      // Extract text content from response
-      // MCP responses can have multiple text blocks interspersed with tool calls.
-      // Claude often outputs partial text, calls tools, gets results, and repeats.
-      // The FINAL text block is typically the complete synthesized response.
-      const textBlocks: string[] = [];
-      const toolUses: any[] = [];
-      const toolResults: any[] = [];
-
-      for (const content of response.content) {
-        const contentAny = content as any;
-        if (content.type === 'text') {
-          textBlocks.push(content.text);
-        } else if (contentAny.type === 'mcp_tool_use') {
-          console.log('🔧 [BRAINTRUST] MCP tool used:', contentAny.name);
-          toolUses.push(contentAny);
-        } else if (contentAny.type === 'mcp_tool_result') {
-          console.log('🔧 [BRAINTRUST] MCP tool result received');
-          toolResults.push(contentAny);
-        }
-      }
-
-      console.log('📊 [BRAINTRUST] Response summary:', {
-        textBlocks: textBlocks.length,
-        toolUses: toolUses.length,
-        toolResults: toolResults.length
-      });
-
-      // Use the longest text block (typically the final complete response)
-      // This handles cases where Claude outputs partial text before tool calls
-      let responseText = '';
-      if (textBlocks.length > 0) {
-        // Find the longest text block - this is usually the final synthesized response
-        responseText = textBlocks.reduce((longest, current) => 
-          current.length > longest.length ? current : longest, '');
-        
-        console.log(`📝 [BRAINTRUST] Selected longest text block (${responseText.length} chars) from ${textBlocks.length} blocks`);
-        
-        // Log if there were multiple blocks (indicates tool-use pattern)
-        if (textBlocks.length > 1) {
-          console.log('📝 [BRAINTRUST] Text block lengths:', textBlocks.map(b => b.length));
-        }
-      }
-
-      // Handle empty or incomplete response - try follow-up synthesis
-      // Check for incomplete responses that contain raw tool invocation XML
-      const hasIncompleteToolCall = responseText.includes('<invoke') || 
-                                     responseText.includes('<parameter') ||
-                                     responseText.includes('</invoke>');
-      
-      if (!responseText || responseText.trim().length === 0 || hasIncompleteToolCall) {
-        if (hasIncompleteToolCall) {
-          console.warn('⚠️ [BRAINTRUST] Response contains incomplete tool invocation XML, attempting synthesis...');
-        } else {
-          console.warn('⚠️ [BRAINTRUST] Empty response, attempting synthesis...');
-        }
-        return await this.synthesizeResponse(messages);
-      }
-
-      console.log(`✅ [BRAINTRUST] Response received (${responseText.length} chars)`);
-      return responseText;
-
-    } catch (error) {
-      console.error('❌ [BRAINTRUST] Error in sendMessage:', error);
-      throw error;
-    }
+      },
+      { name: 'claude-sonnet-mcp-call' }
+    );
   }
 
   /**
@@ -236,28 +265,36 @@ export class BraintrustClaudeService {
   private async synthesizeResponse(originalMessages: ConversationMessage[]): Promise<string> {
     console.log('🔄 [BRAINTRUST] Making follow-up call to synthesize results...');
 
-    const followUpMessages = [
-      ...originalMessages,
-      { 
-        role: 'assistant' as const, 
-        content: '[Tool calls completed - data gathered from sources]' 
-      },
-      { 
-        role: 'user' as const, 
-        content: 'Please provide your final answer based on the sources you just consulted.' 
-      }
-    ];
+    // Wrap synthesis call in traced() for Braintrust observability
+    return traced(
+      async (span: { log: (data: Record<string, unknown>) => void }) => {
+        const followUpMessages = [
+          ...originalMessages,
+          { 
+            role: 'assistant' as const, 
+            content: '[Tool calls completed - data gathered from sources]' 
+          },
+          { 
+            role: 'user' as const, 
+            content: 'Please provide your final answer based on the sources you just consulted.' 
+          }
+        ];
 
-    try {
-      const response = await this.client.messages.create({
-        model: 'claude-sonnet-4-5-20250929',
-        max_tokens: 2000,
-        temperature: 0,
-        messages: followUpMessages.map(msg => ({
-          role: msg.role,
-          content: msg.content
-        })),
-        system: `Based on the sources you just consulted, provide a complete response with proper citations.
+        span.log({
+          input: 'Synthesis request after tool calls',
+          metadata: { model: 'claude-sonnet-4-5-20250929', messageCount: followUpMessages.length },
+        });
+
+        try {
+          const response = await this.client.messages.create({
+            model: 'claude-sonnet-4-5-20250929',
+            max_tokens: 2000,
+            temperature: 0,
+            messages: followUpMessages.map(msg => ({
+              role: msg.role,
+              content: msg.content
+            })),
+            system: `Based on the sources you just consulted, provide a complete response with proper citations.
 
 SLACK FORMATTING:
 • Bold text: *bold text* (single asterisks only)
@@ -268,40 +305,54 @@ SLACK FORMATTING:
 • For Sefaria URLs: replace spaces with underscores, replace colons with periods
 • No markdown headers (#, ##, ###) - use *bold* instead
 • No double asterisks (**) - use single asterisks (*)`
-      } as any);
+          } as any);
 
-      let synthesisText = '';
-      for (const content of response.content) {
-        if (content.type === 'text') {
-          synthesisText += content.text;
+          let synthesisText = '';
+          for (const content of response.content) {
+            if (content.type === 'text') {
+              synthesisText += content.text;
+            }
+          }
+
+          if (synthesisText && synthesisText.trim().length > 0) {
+            console.log(`✅ [BRAINTRUST] Synthesis successful (${synthesisText.length} chars)`);
+            span.log({ output: synthesisText });
+            return synthesisText;
+          }
+        } catch (error) {
+          console.error('❌ [BRAINTRUST] Synthesis failed:', error);
         }
-      }
 
-      if (synthesisText && synthesisText.trim().length > 0) {
-        console.log(`✅ [BRAINTRUST] Synthesis successful (${synthesisText.length} chars)`);
-        return synthesisText;
-      }
-    } catch (error) {
-      console.error('❌ [BRAINTRUST] Synthesis failed:', error);
-    }
-
-    return 'I apologize, but I was unable to generate a complete response. Please try rephrasing your question.';
+        const fallback = 'I apologize, but I was unable to generate a complete response. Please try rephrasing your question.';
+        span.log({ output: fallback, metadata: { fallback: true } });
+        return fallback;
+      },
+      { name: 'claude-synthesis-call' }
+    );
   }
 
   /**
    * Format response for Slack using Claude
    */
   async formatForSlack(response: string): Promise<string> {
-    try {
-      console.log('🛠️ [BRAINTRUST-FORMAT] Starting Slack formatting...');
+    // Wrap formatting call in traced() for Braintrust observability
+    return traced(
+      async (span: { log: (data: Record<string, unknown>) => void }) => {
+        try {
+          console.log('🛠️ [BRAINTRUST-FORMAT] Starting Slack formatting...');
 
-      const formattingResponse = await this.client.messages.create({
-        model: 'claude-sonnet-4-5-20250929',
-        max_tokens: 12000,
-        temperature: 0,
-        messages: [{
-          role: 'user',
-          content: `Convert this response to proper Slack formatting.
+          span.log({
+            input: response.substring(0, 500) + (response.length > 500 ? '...' : ''),
+            metadata: { model: 'claude-sonnet-4-5-20250929', inputLength: response.length },
+          });
+
+          const formattingResponse = await this.client.messages.create({
+            model: 'claude-sonnet-4-5-20250929',
+            max_tokens: 12000,
+            temperature: 0,
+            messages: [{
+              role: 'user',
+              content: `Convert this response to proper Slack formatting.
 
 CRITICAL REQUIREMENT: Include the COMPLETE content. Do not truncate or summarize.
 
@@ -319,21 +370,26 @@ Formatting rules:
 
 Response to convert:
 ${response}`
-        }]
-      });
+            }]
+          });
 
-      const formattedText = formattingResponse.content
-        .filter(block => block.type === 'text')
-        .map(block => (block as any).text)
-        .join('');
+          const formattedText = formattingResponse.content
+            .filter(block => block.type === 'text')
+            .map(block => (block as any).text)
+            .join('');
 
-      console.log('🛠️ [BRAINTRUST-FORMAT] Formatting completed');
-      return formattedText || response;
+          console.log('🛠️ [BRAINTRUST-FORMAT] Formatting completed');
+          span.log({ output: formattedText, metadata: { outputLength: formattedText.length } });
+          return formattedText || response;
 
-    } catch (error) {
-      console.error('❌ [BRAINTRUST-FORMAT] Error:', error);
-      return response;
-    }
+        } catch (error) {
+          console.error('❌ [BRAINTRUST-FORMAT] Error:', error);
+          span.log({ output: response, metadata: { error: true, fallback: true } });
+          return response;
+        }
+      },
+      { name: 'slack-format-call' }
+    );
   }
 
   /**
