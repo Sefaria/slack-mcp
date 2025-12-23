@@ -1,8 +1,27 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { initLogger, traced } from 'braintrust';
+import { initLogger, traced, Span } from 'braintrust';
 
 // Braintrust configuration
 const BRAINTRUST_PROJECT_NAME = 'On Site Agent';
+
+// Pricing per million tokens (as of Dec 2024)
+const HAIKU_PRICING = { input: 0.80, output: 4.00 };
+
+/**
+ * Calculate cost in USD from token usage for Haiku
+ */
+function calculateHaikuCost(
+  inputTokens: number,
+  outputTokens: number,
+  cacheCreationTokens: number = 0,
+  cacheReadTokens: number = 0
+): number {
+  const inputCost = (inputTokens / 1_000_000) * HAIKU_PRICING.input;
+  const outputCost = (outputTokens / 1_000_000) * HAIKU_PRICING.output;
+  const cacheCreationCost = (cacheCreationTokens / 1_000_000) * HAIKU_PRICING.input * 1.25;
+  const cacheReadCost = (cacheReadTokens / 1_000_000) * HAIKU_PRICING.input * 0.1;
+  return inputCost + outputCost + cacheCreationCost + cacheReadCost;
+}
 
 let initialized = false;
 let cachedClient: Anthropic | null = null;
@@ -50,7 +69,7 @@ export async function tracedCall<T>(
   initializeBraintrust();
 
   return traced(
-    async (span: { log: (data: Record<string, unknown>) => void }) => {
+    async (span: Span) => {
       if (metadata) {
         span.log({ metadata });
       }
@@ -74,30 +93,66 @@ export async function tracedHaikuCall(
   const { maxTokens = 50, temperature = 0.7 } = options;
 
   return traced(
-    async (span: { log: (data: Record<string, unknown>) => void }) => {
+    async (span: Span) => {
       span.log({
         input: userPrompt.substring(0, 200),
         metadata: { model: 'claude-haiku-4-5-20251001', spanName },
       });
 
-      const response = await client.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: maxTokens,
-        temperature,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-      });
+      try {
+        const response = await client.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: maxTokens,
+          temperature,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+        });
 
-      const text = response.content
-        .filter((block) => block.type === 'text')
-        .map((block) => (block as any).text)
-        .join('');
+        // Extract usage data
+        const usage = response.usage;
+        const inputTokens = usage.input_tokens;
+        const outputTokens = usage.output_tokens;
+        const cacheCreationTokens = usage.cache_creation_input_tokens || 0;
+        const cacheReadTokens = usage.cache_read_input_tokens || 0;
+        const totalTokens = inputTokens + outputTokens + cacheCreationTokens;
+        const cost = calculateHaikuCost(inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens);
 
-      span.log({ output: text });
+        const text = response.content
+          .filter((block) => block.type === 'text')
+          .map((block) => (block as any).text)
+          .join('');
 
-      return text;
+        span.log({ 
+          output: text,
+          metrics: {
+            tokens: totalTokens,
+            prompt_tokens: inputTokens,
+            completion_tokens: outputTokens,
+            cache_creation_input_tokens: cacheCreationTokens,
+            cache_read_input_tokens: cacheReadTokens,
+            cost: cost,
+            llm_calls: 1,
+          },
+        });
+
+        return text;
+      } catch (error) {
+        console.error('❌ [BRAINTRUST] Haiku call failed:', error);
+        span.log({
+          error: error instanceof Error ? error.message : String(error),
+          metadata: {
+            errorType: 'llm_error',
+            errorStack: error instanceof Error ? error.stack : undefined,
+          },
+          metrics: {
+            llm_calls: 1,
+            llm_errors: 1,
+          },
+        });
+        throw error;
+      }
     },
-    { name: spanName }
+    { name: spanName, type: 'llm' }
   );
 }
 

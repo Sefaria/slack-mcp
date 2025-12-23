@@ -12,7 +12,7 @@ import {
 } from '../nodes';
 import { SlackWorkflowState } from '../graph-types';
 import { BraintrustClaudeService } from '../braintrust-claude-service';
-import { traced, initLogger } from 'braintrust';
+import { traced, initLogger, Span } from 'braintrust';
 import { SlackMessageEvent } from '../types';
 
 // Beta's Claude service instance with Braintrust observability and prompt versioning
@@ -189,7 +189,7 @@ export function createBetaWorkflow(slackToken?: string, anthropicKey?: string, m
       
       // Message should be processed - wrap in traced() for Braintrust observability
       return traced(
-        async (span: { log: (data: Record<string, unknown>) => void }) => {
+        async (span: Span) => {
           console.log('🧠 [BETA-TRACE] Starting traced workflow execution...');
           
           // Execute the actual workflow
@@ -204,17 +204,16 @@ export function createBetaWorkflow(slackToken?: string, anthropicKey?: string, m
           // Extract the cleaned user query from conversationContext (same text sent to Claude)
           const userQuery = result.conversationContext?.find((msg: any) => msg.role === 'user')?.content || event.text || '';
           
-          // Get prompt version tag for Braintrust logging
-          const promptVersionTag = betaClaudeService?.getPromptVersionTag();
-          const tags: string[] = ['Beta'];
-          if (promptVersionTag) {
-            tags.push(promptVersionTag);
-          }
+          // Get core prompt tags for Braintrust logging
+          const corePromptTags = betaClaudeService?.getCorePromptTags() || [];
+          const tags: string[] = ['Beta', ...corePromptTags];
           
           // Log input and output together after workflow completes
           span.log({
             input: userQuery,
             output: result.formattedResponse || result.claudeResponse || null,
+            // Log error to Braintrust for error tracking (if any occurred)
+            ...(result.errorOccurred && result.error ? { error: result.error } : {}),
             tags,
             metadata: {
               bot: 'beta',
@@ -224,9 +223,12 @@ export function createBetaWorkflow(slackToken?: string, anthropicKey?: string, m
               message_ts: event.ts,
               shouldProcess: result.shouldProcess,
               errorOccurred: result.errorOccurred,
-              error: result.error,
               promptId: betaClaudeService?.getPromptId(),
               promptVersion: betaClaudeService?.getPromptVersion(),
+            },
+            // Track errors in metrics for dashboard aggregation
+            metrics: {
+              ...(result.errorOccurred ? { errors: 1 } : {}),
             },
           });
 
@@ -236,6 +238,7 @@ export function createBetaWorkflow(slackToken?: string, anthropicKey?: string, m
         },
         {
           name: 'beta-slack-workflow',
+          type: 'task',
         }
       );
     },

@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { initLogger, loadPrompt, traced } from 'braintrust';
+import { initLogger, loadPrompt, traced, Span } from 'braintrust';
 import { ConversationMessage } from './types';
 
 // Braintrust configuration for the Beta bot
@@ -8,6 +8,32 @@ const BRAINTRUST_PROMPT_SLUG = 'core-8fbc';
 
 // Fallback system prompt in case Braintrust prompt loading fails
 const FALLBACK_SYSTEM_PROMPT = `You are a knowledgeable guide helping users explore the Jewish textual tradition through Sefaria's library and the Jewish calendar through Hebcal.`;
+
+// Pricing per million tokens (as of Dec 2024)
+// See: https://www.anthropic.com/pricing
+const PRICING = {
+  'claude-sonnet-4-5-20250929': { input: 3.00, output: 15.00 },
+  'claude-haiku-4-5-20251001': { input: 0.80, output: 4.00 },
+} as const;
+
+/**
+ * Calculate cost in USD from token usage
+ */
+function calculateCost(
+  model: keyof typeof PRICING,
+  inputTokens: number,
+  outputTokens: number,
+  cacheCreationTokens: number = 0,
+  cacheReadTokens: number = 0
+): number {
+  const pricing = PRICING[model] || PRICING['claude-sonnet-4-5-20250929'];
+  // Cache creation costs 25% more than input, cache read costs 90% less
+  const inputCost = (inputTokens / 1_000_000) * pricing.input;
+  const outputCost = (outputTokens / 1_000_000) * pricing.output;
+  const cacheCreationCost = (cacheCreationTokens / 1_000_000) * pricing.input * 1.25;
+  const cacheReadCost = (cacheReadTokens / 1_000_000) * pricing.input * 0.1;
+  return inputCost + outputCost + cacheCreationCost + cacheReadCost;
+}
 
 /**
  * BraintrustClaudeService - Claude service with Braintrust observability and prompt versioning
@@ -119,7 +145,7 @@ export class BraintrustClaudeService {
 
     // Wrap the LLM call in traced() for Braintrust observability
     return traced(
-      async (span: { log: (data: Record<string, unknown>) => void }) => {
+      async (span: Span) => {
         try {
           const requestPayload = {
             model: 'claude-sonnet-4-5-20250929',
@@ -161,6 +187,24 @@ export class BraintrustClaudeService {
             headers: {
               'anthropic-beta': 'mcp-client-2025-04-04'
             }
+          });
+
+          // Extract usage data
+          const usage = response.usage;
+          const inputTokens = usage.input_tokens;
+          const outputTokens = usage.output_tokens;
+          const cacheCreationTokens = usage.cache_creation_input_tokens || 0;
+          const cacheReadTokens = usage.cache_read_input_tokens || 0;
+          const totalTokens = inputTokens + outputTokens + cacheCreationTokens;
+          const cost = calculateCost('claude-sonnet-4-5-20250929', inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens);
+
+          console.log('📊 [BRAINTRUST] Token usage:', {
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            cache_creation_input_tokens: cacheCreationTokens,
+            cache_read_input_tokens: cacheReadTokens,
+            total_tokens: totalTokens,
+            cost_usd: cost.toFixed(6),
           });
 
           // Log response content blocks for debugging
@@ -210,6 +254,46 @@ export class BraintrustClaudeService {
             toolResults: toolResults.length
           });
 
+          // Create child spans for each MCP tool call for Braintrust dashboard aggregation
+          // This allows Braintrust to count tool calls properly
+          for (const toolUse of toolUses) {
+            const matchingResult = toolResults.find((r: any) => r.tool_use_id === toolUse.id);
+            const isError = matchingResult?.is_error === true;
+            
+            // Extract the actual tool output content
+            // MCP tool results have content as an array of content blocks
+            let toolOutput = 'No result';
+            if (matchingResult?.content) {
+              // Content can be an array of content blocks or a string
+              if (Array.isArray(matchingResult.content)) {
+                toolOutput = matchingResult.content
+                  .map((block: any) => block.text || JSON.stringify(block))
+                  .join('\n');
+              } else if (typeof matchingResult.content === 'string') {
+                toolOutput = matchingResult.content;
+              } else {
+                toolOutput = JSON.stringify(matchingResult.content);
+              }
+            }
+            
+            span.traced(
+              (toolSpan: Span) => {
+                toolSpan.log({
+                  input: JSON.stringify(toolUse.input || {}),
+                  output: toolOutput,
+                  ...(isError ? { error: matchingResult?.content?.[0]?.text || 'Tool execution failed' } : {}),
+                  metadata: {
+                    tool_name: toolUse.name,
+                    server_name: toolUse.server_name,
+                    tool_use_id: toolUse.id,
+                    is_error: isError,
+                  },
+                });
+              },
+              { name: `mcp-tool:${toolUse.name}`, type: 'tool' }
+            );
+          }
+
           // Use the longest text block (typically the final complete response)
           // This handles cases where Claude outputs partial text before tool calls
           let responseText = '';
@@ -243,13 +327,35 @@ export class BraintrustClaudeService {
             return synthesized;
           }
 
-          // Log output to Braintrust span
+          // Count tool errors from MCP results
+          const toolErrors = toolResults.filter((r: any) => r.is_error === true);
+          const toolErrorCount = toolErrors.length;
+          
+          if (toolErrorCount > 0) {
+            console.warn(`⚠️ [BRAINTRUST] ${toolErrorCount} tool error(s) detected`);
+          }
+
+          // Log output to Braintrust span with metrics
           span.log({
             output: responseText,
             metadata: {
               toolUsesCount: toolUses.length,
               toolResultsCount: toolResults.length,
+              toolErrorCount: toolErrorCount,
               responseLength: responseText.length,
+              toolNames: toolUses.map((t: any) => t.name),
+            },
+            metrics: {
+              tokens: totalTokens,
+              prompt_tokens: inputTokens,
+              completion_tokens: outputTokens,
+              cache_creation_input_tokens: cacheCreationTokens,
+              cache_read_input_tokens: cacheReadTokens,
+              cost: cost,
+              // Counts for Braintrust dashboard aggregation
+              llm_calls: 1,
+              tool_calls: toolUses.length,
+              tool_errors: toolErrorCount,
             },
           });
 
@@ -258,10 +364,18 @@ export class BraintrustClaudeService {
 
         } catch (error) {
           console.error('❌ [BRAINTRUST] Error in sendMessage:', error);
+          // Log the error to Braintrust for LLM error tracking
+          span.log({
+            error: error instanceof Error ? error.message : String(error),
+            metadata: {
+              errorType: 'llm_error',
+              errorStack: error instanceof Error ? error.stack : undefined,
+            },
+          });
           throw error;
         }
       },
-      { name: 'claude-sonnet-mcp-call' }
+      { name: 'claude-sonnet-mcp-call', type: 'llm' }
     );
   }
 
@@ -273,7 +387,7 @@ export class BraintrustClaudeService {
 
     // Wrap synthesis call in traced() for Braintrust observability
     return traced(
-      async (span: { log: (data: Record<string, unknown>) => void }) => {
+      async (span: Span) => {
         const followUpMessages = [
           ...originalMessages,
           { 
@@ -313,6 +427,15 @@ SLACK FORMATTING:
 • No double asterisks (**) - use single asterisks (*)`
           } as any);
 
+          // Extract usage data for synthesis call
+          const usage = response.usage;
+          const inputTokens = usage.input_tokens;
+          const outputTokens = usage.output_tokens;
+          const cacheCreationTokens = usage.cache_creation_input_tokens || 0;
+          const cacheReadTokens = usage.cache_read_input_tokens || 0;
+          const totalTokens = inputTokens + outputTokens + cacheCreationTokens;
+          const cost = calculateCost('claude-sonnet-4-5-20250929', inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens);
+
           let synthesisText = '';
           for (const content of response.content) {
             if (content.type === 'text') {
@@ -322,18 +445,45 @@ SLACK FORMATTING:
 
           if (synthesisText && synthesisText.trim().length > 0) {
             console.log(`✅ [BRAINTRUST] Synthesis successful (${synthesisText.length} chars)`);
-            span.log({ output: synthesisText });
+            span.log({ 
+              output: synthesisText,
+              metrics: {
+                tokens: totalTokens,
+                prompt_tokens: inputTokens,
+                completion_tokens: outputTokens,
+                cache_creation_input_tokens: cacheCreationTokens,
+                cache_read_input_tokens: cacheReadTokens,
+                cost: cost,
+                llm_calls: 1,
+              },
+            });
             return synthesisText;
           }
         } catch (error) {
           console.error('❌ [BRAINTRUST] Synthesis failed:', error);
+          // Log the error to Braintrust for LLM error tracking
+          span.log({
+            error: error instanceof Error ? error.message : String(error),
+            metadata: {
+              errorType: 'llm_error',
+              errorStack: error instanceof Error ? error.stack : undefined,
+            },
+            metrics: {
+              llm_calls: 1,
+              llm_errors: 1,
+            },
+          });
         }
 
         const fallback = 'I apologize, but I was unable to generate a complete response. Please try rephrasing your question.';
-        span.log({ output: fallback, metadata: { fallback: true } });
+        span.log({ 
+          output: fallback, 
+          metadata: { fallback: true },
+          metrics: { llm_calls: 1 },
+        });
         return fallback;
       },
-      { name: 'claude-synthesis-call' }
+      { name: 'claude-synthesis-call', type: 'llm' }
     );
   }
 
@@ -343,7 +493,7 @@ SLACK FORMATTING:
   async formatForSlack(response: string): Promise<string> {
     // Wrap formatting call in traced() for Braintrust observability
     return traced(
-      async (span: { log: (data: Record<string, unknown>) => void }) => {
+      async (span: Span) => {
         try {
           console.log('🛠️ [BRAINTRUST-FORMAT] Starting Slack formatting...');
 
@@ -379,22 +529,55 @@ ${response}`
             }]
           });
 
+          // Extract usage data for formatting call
+          const usage = formattingResponse.usage;
+          const inputTokens = usage.input_tokens;
+          const outputTokens = usage.output_tokens;
+          const cacheCreationTokens = usage.cache_creation_input_tokens || 0;
+          const cacheReadTokens = usage.cache_read_input_tokens || 0;
+          const totalTokens = inputTokens + outputTokens + cacheCreationTokens;
+          const cost = calculateCost('claude-sonnet-4-5-20250929', inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens);
+
           const formattedText = formattingResponse.content
             .filter(block => block.type === 'text')
             .map(block => (block as any).text)
             .join('');
 
           console.log('🛠️ [BRAINTRUST-FORMAT] Formatting completed');
-          span.log({ output: formattedText, metadata: { outputLength: formattedText.length } });
+          span.log({ 
+            output: formattedText, 
+            metadata: { outputLength: formattedText.length },
+            metrics: {
+              tokens: totalTokens,
+              prompt_tokens: inputTokens,
+              completion_tokens: outputTokens,
+              cache_creation_input_tokens: cacheCreationTokens,
+              cache_read_input_tokens: cacheReadTokens,
+              cost: cost,
+              llm_calls: 1,
+            },
+          });
           return formattedText || response;
 
         } catch (error) {
           console.error('❌ [BRAINTRUST-FORMAT] Error:', error);
-          span.log({ output: response, metadata: { error: true, fallback: true } });
+          span.log({ 
+            output: response, 
+            error: error instanceof Error ? error.message : String(error),
+            metadata: { 
+              errorType: 'llm_error',
+              fallback: true,
+              errorStack: error instanceof Error ? error.stack : undefined,
+            },
+            metrics: {
+              llm_calls: 1,
+              llm_errors: 1,
+            },
+          });
           return response;
         }
       },
-      { name: 'slack-format-call' }
+      { name: 'slack-format-call', type: 'llm' }
     );
   }
 
@@ -406,14 +589,18 @@ ${response}`
   }
 
   /**
-   * Get the prompt version tag for use in Braintrust span logs.
-   * Returns a formatted tag string like "prompt:abc123def456" or null if not available.
+   * Get the core prompt tags for use in Braintrust span logs.
+   * Returns an array of formatted tags like ["core-prompt-id:abc123", "core-prompt-ver:xyz789"]
    */
-  getPromptVersionTag(): string | null {
+  getCorePromptTags(): string[] {
+    const tags: string[] = [];
     if (this.promptId) {
-      return `prompt:${this.promptId}`;
+      tags.push(`core-prompt-id:${this.promptId}`);
     }
-    return null;
+    if (this.promptVersion) {
+      tags.push(`core-prompt-ver:${this.promptVersion}`);
+    }
+    return tags;
   }
 
   /**

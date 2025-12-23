@@ -1,6 +1,23 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { ClaudeService, ConversationMessage, MCPServerConfig } from './types';
 import { getTracedAnthropicClient } from './braintrust-logger';
+import { traced, Span } from 'braintrust';
+
+// Pricing per million tokens (as of Dec 2024)
+const SONNET_PRICING = { input: 3.00, output: 15.00 };
+
+function calculateSonnetCost(
+  inputTokens: number,
+  outputTokens: number,
+  cacheCreationTokens: number = 0,
+  cacheReadTokens: number = 0
+): number {
+  const inputCost = (inputTokens / 1_000_000) * SONNET_PRICING.input;
+  const outputCost = (outputTokens / 1_000_000) * SONNET_PRICING.output;
+  const cacheCreationCost = (cacheCreationTokens / 1_000_000) * SONNET_PRICING.input * 1.25;
+  const cacheReadCost = (cacheReadTokens / 1_000_000) * SONNET_PRICING.input * 0.1;
+  return inputCost + outputCost + cacheCreationCost + cacheReadCost;
+}
 
 export class ClaudeServiceImpl implements ClaudeService {
   private client: Anthropic;
@@ -219,17 +236,25 @@ SLACK FORMATTING (use exactly as specified):
   }
 
   async formatForSlack(response: string): Promise<string> {
-    try {
-      console.log('🛠️ [CLAUDE-4-FORMAT] Starting Claude 4 Slack formatting correction...');
-      console.log('🛠️ [CLAUDE-4-FORMAT] Input length:', response.length);
-      
-      const correctionResponse = await this.client.messages.create({
-        model: 'claude-sonnet-4-5-20250929',
-        max_tokens: 12000,
-        temperature: 0,
-        messages: [{
-          role: 'user',
-          content: `Convert this response to proper Slack formatting. 
+    // Wrap in traced() for Braintrust observability
+    return traced(
+      async (span: Span) => {
+        try {
+          console.log('🛠️ [CLAUDE-4-FORMAT] Starting Claude 4 Slack formatting correction...');
+          console.log('🛠️ [CLAUDE-4-FORMAT] Input length:', response.length);
+
+          span.log({
+            input: response.substring(0, 500) + (response.length > 500 ? '...' : ''),
+            metadata: { model: 'claude-sonnet-4-5-20250929', inputLength: response.length },
+          });
+          
+          const correctionResponse = await this.client.messages.create({
+            model: 'claude-sonnet-4-5-20250929',
+            max_tokens: 12000,
+            temperature: 0,
+            messages: [{
+              role: 'user',
+              content: `Convert this response to proper Slack formatting. 
 
 CRITICAL REQUIREMENT: You MUST include the COMPLETE content of the input in your output. Do not truncate, summarize, or ask if the user wants you to continue. Convert the ENTIRE response.
 
@@ -262,27 +287,60 @@ Key transformations for Sefaria URLs:
 
 Response to convert (CONVERT EVERYTHING, DO NOT TRUNCATE):
 ${response}`
-        }]
-      });
-      
-      const correctedText = correctionResponse.content
-        .filter(block => block.type === 'text')
-        .map(block => (block as any).text)
-        .join('');
-      
-      console.log('🛠️ [CLAUDE-4-FORMAT] Correction completed');
-      console.log('🛠️ [CLAUDE-4-FORMAT] Output length:', correctedText.length);
-      console.log('🛠️ [CLAUDE-4-FORMAT] Length ratio:', (correctedText.length / response.length).toFixed(2));
-      
-      if (correctedText.length < response.length * 0.8) {
-        console.warn('🛠️ [CLAUDE-4-FORMAT] WARNING: Output significantly shorter than input, may be truncated');
-      }
-      
-      return correctedText || response;
-    } catch (error) {
-      console.error('🛠️ [CLAUDE-4-FORMAT] Error formatting with Claude 4:', error);
-      return response;
-    }
+            }]
+          });
+
+          // Extract usage data
+          const usage = correctionResponse.usage;
+          const inputTokens = usage.input_tokens;
+          const outputTokens = usage.output_tokens;
+          const cacheCreationTokens = usage.cache_creation_input_tokens || 0;
+          const cacheReadTokens = usage.cache_read_input_tokens || 0;
+          const totalTokens = inputTokens + outputTokens + cacheCreationTokens;
+          const cost = calculateSonnetCost(inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens);
+          
+          const correctedText = correctionResponse.content
+            .filter(block => block.type === 'text')
+            .map(block => (block as any).text)
+            .join('');
+          
+          console.log('🛠️ [CLAUDE-4-FORMAT] Correction completed');
+          console.log('🛠️ [CLAUDE-4-FORMAT] Output length:', correctedText.length);
+          console.log('🛠️ [CLAUDE-4-FORMAT] Length ratio:', (correctedText.length / response.length).toFixed(2));
+          
+          if (correctedText.length < response.length * 0.8) {
+            console.warn('🛠️ [CLAUDE-4-FORMAT] WARNING: Output significantly shorter than input, may be truncated');
+          }
+
+          span.log({
+            output: correctedText,
+            metadata: { outputLength: correctedText.length },
+            metrics: {
+              tokens: totalTokens,
+              prompt_tokens: inputTokens,
+              completion_tokens: outputTokens,
+              cache_creation_input_tokens: cacheCreationTokens,
+              cache_read_input_tokens: cacheReadTokens,
+              cost: cost,
+            },
+          });
+          
+          return correctedText || response;
+        } catch (error) {
+          console.error('🛠️ [CLAUDE-4-FORMAT] Error formatting with Claude 4:', error);
+          span.log({
+            output: response,
+            error: error instanceof Error ? error.message : String(error),
+            metadata: {
+              errorType: 'llm_error',
+              fallback: true,
+            },
+          });
+          return response;
+        }
+      },
+      { name: 'slack-format-correction', type: 'llm' }
+    );
   }
 
   private buildMCPConfig(): MCPServerConfig {

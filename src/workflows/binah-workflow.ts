@@ -7,11 +7,55 @@ import {
   validateSlackFormattingNode,
   formatResponseNode,
   sendResponseNode,
-  handleErrorNode
+  handleErrorNode,
+  getMessageText
 } from '../nodes';
 import { SlackWorkflowState } from '../graph-types';
+import { SlackMessageEvent } from '../types';
 import { traced } from 'braintrust';
 import { initializeBraintrust } from '../braintrust-logger';
+
+/**
+ * Quick pre-validation to determine if we should trace this message.
+ * This mirrors the essential checks in validateMessageNode but runs before
+ * entering the traced context, so we can skip logging for messages we won't process.
+ */
+function shouldTraceMessage(event: SlackMessageEvent, botUserId?: string): boolean {
+  // Skip bot messages
+  if (event.bot_id) {
+    console.log('🧠 [BINAH-PRECHECK] Skipping bot message');
+    return false;
+  }
+  
+  // Skip messages with certain subtypes
+  if (event.subtype && event.subtype !== 'bot_message') {
+    console.log('🧠 [BINAH-PRECHECK] Skipping subtype:', event.subtype);
+    return false;
+  }
+  
+  // Must have message text
+  const messageText = getMessageText(event);
+  if (!messageText) {
+    console.log('🧠 [BINAH-PRECHECK] No message text');
+    return false;
+  }
+  
+  // Must have bot mentions
+  const mentions = messageText.match(/<@(U[A-Z0-9]+)>/g);
+  if (!mentions || mentions.length === 0) {
+    console.log('🧠 [BINAH-PRECHECK] No bot mentions found');
+    return false;
+  }
+  
+  // If we have a bot user ID, check if this bot is mentioned
+  if (botUserId && !messageText.includes(`<@${botUserId}>`)) {
+    console.log('🧠 [BINAH-PRECHECK] This bot not mentioned');
+    return false;
+  }
+  
+  console.log('🧠 [BINAH-PRECHECK] Message should be traced');
+  return true;
+}
 
 // Deep agent instance (cached)
 let binahAgent: any = null;
@@ -365,17 +409,32 @@ export function createBinahWorkflow(slackToken?: string, anthropicKey?: string, 
   
   const baseWorkflow = createBaseWorkflow(binahNodes);
 
-  // Return a traced wrapper that captures the entire workflow execution
+  // Return a wrapper that only traces when we should process the message
   return {
     invoke: async (initialState: SlackWorkflowState) => {
+      const event = initialState.slackEvent;
+      const botUserId = initialState.botContext?.userId;
+      
+      // Quick pre-check: should we trace this message?
+      if (!shouldTraceMessage(event, botUserId)) {
+        console.log('🧠 [BINAH] Skipping trace for message that won\'t be processed');
+        // Run workflow without tracing - it will exit quickly after validation
+        return await baseWorkflow.invoke(initialState);
+      }
+      
+      // Message should be processed - wrap in traced() for Braintrust observability
       return traced(
         async (span: { log: (data: Record<string, unknown>) => void }) => {
-          const event = initialState.slackEvent;
-
           console.log('🧠 [BINAH-TRACE] Starting traced workflow execution...');
           
           // Execute the actual workflow
           const result = await baseWorkflow.invoke(initialState);
+          
+          // Double-check: only log if we actually processed (in case validation found more issues)
+          if (!result.shouldProcess) {
+            console.log('🧠 [BINAH-TRACE] Workflow determined not to process, skipping log');
+            return result;
+          }
           
           // Extract the cleaned user query from conversationContext
           const userQuery = result.conversationContext?.find((msg: any) => msg.role === 'user')?.content || event.text || '';
