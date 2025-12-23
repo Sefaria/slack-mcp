@@ -204,10 +204,18 @@ export function createBetaWorkflow(slackToken?: string, anthropicKey?: string, m
           // Extract the cleaned user query from conversationContext (same text sent to Claude)
           const userQuery = result.conversationContext?.find((msg: any) => msg.role === 'user')?.content || event.text || '';
           
+          // Get prompt version tag for Braintrust logging
+          const promptVersionTag = betaClaudeService?.getPromptVersionTag();
+          const tags: string[] = ['Beta'];
+          if (promptVersionTag) {
+            tags.push(promptVersionTag);
+          }
+          
           // Log input and output together after workflow completes
           span.log({
             input: userQuery,
             output: result.formattedResponse || result.claudeResponse || null,
+            tags,
             metadata: {
               bot: 'beta',
               user: event.user,
@@ -217,6 +225,8 @@ export function createBetaWorkflow(slackToken?: string, anthropicKey?: string, m
               shouldProcess: result.shouldProcess,
               errorOccurred: result.errorOccurred,
               error: result.error,
+              promptId: betaClaudeService?.getPromptId(),
+              promptVersion: betaClaudeService?.getPromptVersion(),
             },
           });
 

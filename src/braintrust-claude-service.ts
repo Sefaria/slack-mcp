@@ -23,6 +23,8 @@ export class BraintrustClaudeService {
   private projectName: string;
   private systemPrompt: string | null = null;
   private promptMetadata: Record<string, any> | null = null;
+  private promptId: string | null = null;
+  private promptVersion: string | null = null;
   private initialized: boolean = false;
 
   constructor(
@@ -59,6 +61,11 @@ export class BraintrustClaudeService {
         slug: BRAINTRUST_PROMPT_SLUG,
       });
 
+      // Store prompt ID and version directly from the Prompt object
+      // These are the canonical identifiers for the prompt version
+      this.promptId = prompt.id || null;
+      this.promptVersion = prompt.version || null;
+
       // Build the prompt without query to extract the system message
       // We'll inject the actual user messages separately
       const builtPrompt = prompt.build({});
@@ -86,8 +93,7 @@ export class BraintrustClaudeService {
           this.systemPrompt = FALLBACK_SYSTEM_PROMPT;
         }
         
-        const promptVersion = this.promptMetadata?.id || 'unknown';
-        console.log(`✅ [BRAINTRUST] Prompt loaded successfully (version: ${promptVersion})`);
+        console.log(`✅ [BRAINTRUST] Prompt loaded successfully (id: ${this.promptId}, version: ${this.promptVersion})`);
         console.log(`✅ [BRAINTRUST] System prompt length: ${this.systemPrompt.length} chars`);
       } else {
         console.warn(`⚠️ [BRAINTRUST] No system message found in prompt, using fallback`);
@@ -397,6 +403,31 @@ ${response}`
    */
   getPromptMetadata(): Record<string, any> | null {
     return this.promptMetadata;
+  }
+
+  /**
+   * Get the prompt version tag for use in Braintrust span logs.
+   * Returns a formatted tag string like "prompt:abc123def456" or null if not available.
+   */
+  getPromptVersionTag(): string | null {
+    if (this.promptId) {
+      return `prompt:${this.promptId}`;
+    }
+    return null;
+  }
+
+  /**
+   * Get the prompt ID directly
+   */
+  getPromptId(): string | null {
+    return this.promptId;
+  }
+
+  /**
+   * Get the prompt version (transaction ID) directly
+   */
+  getPromptVersion(): string | null {
+    return this.promptVersion;
   }
 
   /**
