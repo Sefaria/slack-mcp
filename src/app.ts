@@ -7,6 +7,7 @@ import { botRegistry, BotConfig } from './bot-registry';
 import { createBinaWorkflow } from './workflows/bina-workflow';
 import { createBinahWorkflow } from './workflows/binah-workflow';
 import { createBetaWorkflow } from './workflows/beta-workflow';
+import { createAgentApiWorkflow } from './workflows/agentapi-workflow';
 
 dotenv.config();
 
@@ -115,6 +116,8 @@ class SlackMCPApp {
         return createBinahWorkflow;
       case 'beta':
         return createBetaWorkflow;
+      case 'betaagent':
+        return createAgentApiWorkflow;
       default:
         console.warn(`⚠️ No specific workflow for bot "${botName}", using bina workflow`);
         return createBinaWorkflow;
