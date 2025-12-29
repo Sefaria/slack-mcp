@@ -25,6 +25,7 @@ export interface SlackMessage {
   ts: string;
   thread_ts?: string;
   bot_id?: string;
+  metadata?: any;
 }
 
 // Conversation Types

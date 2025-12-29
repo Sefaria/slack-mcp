@@ -8,14 +8,25 @@ import {
   sendResponseNode,
   handleErrorNode,
   initializeServices,
-  getMessageText
+  getMessageText,
+  postAgentProgress
 } from '../nodes';
 import { SlackWorkflowState } from '../graph-types';
-import { AgentClaudeService } from '../agent/agent-claude-service';
+import { AgentClaudeService, AgentProgressUpdate } from '../agent/agent-claude-service';
 import { traced, Span } from 'braintrust';
 import { SlackMessageEvent } from '../types';
 
 let agentClaudeService: AgentClaudeService | null = null;
+
+function progressEnabled(): boolean {
+  const raw = (process.env.SLACK_STREAM_AGENT_PROGRESS || 'true').toLowerCase().trim();
+  return raw !== '0' && raw !== 'false' && raw !== 'off' && raw !== 'no';
+}
+
+function progressVerbose(): boolean {
+  const raw = (process.env.SLACK_STREAM_AGENT_PROGRESS_VERBOSE || 'false').toLowerCase().trim();
+  return raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes';
+}
 
 function ensureAgentClaudeService(apiKey?: string): AgentClaudeService {
   const key = apiKey || process.env.ANTHROPIC_API_KEY;
@@ -31,7 +42,33 @@ function ensureAgentClaudeService(apiKey?: string): AgentClaudeService {
 async function callClaudeAgentNode(state: SlackWorkflowState): Promise<Partial<SlackWorkflowState>> {
   try {
     const service = ensureAgentClaudeService();
-    const response = await service.sendMessage(state.conversationContext || []);
+    const shouldStreamProgress = progressEnabled();
+    const shouldIncludeToolOutput = progressVerbose();
+    const onProgress = shouldStreamProgress
+      ? (update: AgentProgressUpdate) => {
+          if (update.type === 'status') {
+            void postAgentProgress(state.slackEvent, update.text);
+            return;
+          }
+          if (update.type === 'tool_start') {
+            void postAgentProgress(state.slackEvent, update.description);
+            return;
+          }
+          if (update.type === 'tool_end') {
+            if (update.isError) {
+              const suffix = update.outputPreview ? `: ${update.outputPreview}` : '';
+              void postAgentProgress(state.slackEvent, `Tool \`${update.toolName}\` failed${suffix}`);
+            } else {
+              void postAgentProgress(state.slackEvent, `Finished tool \`${update.toolName}\``);
+              if (shouldIncludeToolOutput && update.outputPreview) {
+                void postAgentProgress(state.slackEvent, `Tool output (preview): ${update.outputPreview}`);
+              }
+            }
+          }
+        }
+      : undefined;
+
+    const response = await service.sendMessage(state.conversationContext || [], { onProgress });
     return { claudeResponse: response };
   } catch (error) {
     return {

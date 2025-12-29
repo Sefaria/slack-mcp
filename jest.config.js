@@ -22,6 +22,7 @@ module.exports = {
   setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup.ts'],
   moduleFileExtensions: ['ts', 'js', 'json'],
   testTimeout: 10000,
+  watchman: false,
   clearMocks: true,
   resetMocks: true,
   restoreMocks: true

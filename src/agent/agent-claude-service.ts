@@ -9,6 +9,64 @@ type AnthropicMessageParam = {
   content: any[];
 };
 
+export type AgentProgressUpdate =
+  | { type: 'status'; text: string }
+  | { type: 'tool_start'; toolName: string; input: unknown; description: string }
+  | { type: 'tool_end'; toolName: string; isError: boolean; outputPreview?: string };
+
+export type AgentSendMessageOptions = {
+  onProgress?: (update: AgentProgressUpdate) => void;
+};
+
+function truncate(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen - 1) + '…';
+}
+
+function safeInlineJson(value: unknown, maxLen: number = 400): string {
+  try {
+    return truncate(JSON.stringify(value), maxLen);
+  } catch {
+    return '[unserializable]';
+  }
+}
+
+function describeToolCall(toolName: string, input: any): string {
+  const q = (v: any) => (typeof v === 'string' ? `"${truncate(v, 140)}"` : safeInlineJson(v, 140));
+  switch (toolName) {
+    case 'text_search':
+      return `Searching texts for ${q(input?.query)}${input?.filters?.length ? ` in ${q(input.filters)}` : ''}`;
+    case 'english_semantic_search':
+      return `Semantic search for ${q(input?.query)}`;
+    case 'search_in_book':
+      return `Searching in ${q(input?.book_name)} for ${q(input?.query)}`;
+    case 'search_in_dictionaries':
+      return `Searching dictionaries for ${q(input?.query)}`;
+    case 'get_text':
+      return `Fetching text ${q(input?.reference)}${input?.version_language ? ` (${q(input.version_language)})` : ''}`;
+    case 'get_links_between_texts':
+      return `Finding links from ${q(input?.reference)}`;
+    case 'get_topic_details':
+      return `Loading topic details for ${q(input?.topic_slug)}`;
+    case 'get_current_calendar':
+      return `Fetching current Jewish calendar`;
+    case 'clarify_name_argument':
+      return `Clarifying name ${q(input?.name)}`;
+    case 'clarify_search_path_filter':
+      return `Resolving book filter for ${q(input?.book_name)}`;
+    case 'get_text_or_category_shape':
+      return `Loading shape for ${q(input?.name)}`;
+    case 'get_text_catalogue_info':
+      return `Loading catalogue info for ${q(input?.title)}`;
+    case 'get_available_manuscripts':
+      return `Checking available manuscripts for ${q(input?.reference)}`;
+    case 'get_manuscript_image':
+      return `Downloading manuscript image`;
+    default:
+      return `Running tool ${q(toolName)} with ${safeInlineJson(input, 220)}`;
+  }
+}
+
 export class AgentClaudeService {
   private client: Anthropic;
   private tools: SefariaAgentTools;
@@ -18,13 +76,20 @@ export class AgentClaudeService {
     this.tools = new SefariaAgentTools();
   }
 
-  async sendMessage(messages: ConversationMessage[]): Promise<string> {
+  async sendMessage(messages: ConversationMessage[], options?: AgentSendMessageOptions): Promise<string> {
     const conversation: AnthropicMessageParam[] = messages.map(m => ({
       role: m.role,
       content: [{ type: 'text', text: m.content }]
     }));
 
     const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')?.content || '';
+    const emit = (update: AgentProgressUpdate) => {
+      try {
+        options?.onProgress?.(update);
+      } catch {
+        // Never allow progress callbacks to break the agent.
+      }
+    };
 
     return traced(
       async (span: Span) => {
@@ -45,6 +110,7 @@ export class AgentClaudeService {
         while (iterations < 10) {
           iterations++;
           llmCalls++;
+          emit({ type: 'status', text: `Thinking (pass ${iterations})…` });
 
           const response = await this.client.messages.create(
             {
@@ -100,6 +166,14 @@ SLACK FORMATTING (use exactly as specified):
             const toolUseId =
               toolUse.id || toolUse.tool_use_id || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+            const toolDesc = describeToolCall(toolUse.name, toolUse.input || {});
+            emit({
+              type: 'tool_start',
+              toolName: toolUse.name,
+              input: toolUse.input || {},
+              description: toolDesc
+            });
+
             const toolResult = await (span as any).traced(
               async (toolSpan: Span) => {
                 toolSpan.log({
@@ -115,6 +189,13 @@ SLACK FORMATTING (use exactly as specified):
                 const toolOutput = result.content
                   .map((block: any) => (block?.type === 'text' ? block.text : JSON.stringify(block)))
                   .join('\n');
+
+                emit({
+                  type: 'tool_end',
+                  toolName: toolUse.name,
+                  isError: !!result.is_error,
+                  outputPreview: truncate(toolOutput, 500)
+                });
 
                 toolSpan.log({
                   output: toolOutput,
@@ -144,6 +225,8 @@ SLACK FORMATTING (use exactly as specified):
             });
           }
         }
+
+        emit({ type: 'status', text: 'Synthesizing response…' });
 
         const output =
           finalText.trim() || (iterations >= 10 ? 'Sorry, I hit a tool loop limit while processing your request.' : '');

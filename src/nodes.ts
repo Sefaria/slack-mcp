@@ -2,7 +2,7 @@ import { WebClient } from '@slack/web-api';
 import { SlackWorkflowState } from './graph-types';
 import { SlackHandlerImpl } from './slack-handler';
 import { ClaudeServiceImpl } from './claude-service';
-import { SlackMessageEvent, ConversationMessage } from './types';
+import { SlackMessageEvent, ConversationMessage, SlackMessage } from './types';
 import { getTracedAnthropicClient, tracedHaikuCall } from './braintrust-logger';
 import Anthropic from '@anthropic-ai/sdk';
 
@@ -12,6 +12,8 @@ let claudeService: ClaudeServiceImpl;
 let botUserId: string = '';
 let tracedClient: Anthropic;
 let isCLIMode: boolean = false;
+
+const AGENT_PROGRESS_PREFIX = '⏳ *Progress:*';
 
 export function initializeServices(
   slackToken: string,
@@ -476,6 +478,56 @@ export async function sendResponseNode(state: SlackWorkflowState): Promise<Parti
   }
 }
 
+export async function postAgentProgress(event: SlackMessageEvent, text: string): Promise<void> {
+  try {
+    const threadTs = event.thread_ts || event.ts;
+    const cleanText = text.trim();
+    if (!cleanText) return;
+
+    const messageText = `${AGENT_PROGRESS_PREFIX} ${cleanText}`.slice(0, 3500);
+
+    if (isCLIMode) {
+      console.log(`[AGENT-PROGRESS][CLI] ${event.channel} ${threadTs}: ${messageText}`);
+      return;
+    }
+
+    if (!slackClient) {
+      console.warn('⚠️ [AGENT-PROGRESS] Slack client not initialized');
+      return;
+    }
+
+    const basePayload = {
+      channel: event.channel,
+      thread_ts: threadTs,
+      text: messageText,
+      mrkdwn: true
+    } as any;
+
+    // Message metadata can require extra Slack scopes; try it first, then fall back.
+    try {
+      await slackClient.chat.postMessage({
+        ...basePayload,
+        metadata: {
+          event_type: 'agent_progress',
+          event_payload: { v: 1 }
+        }
+      } as any);
+    } catch (err) {
+      const slackError = (err as any)?.data?.error;
+      if (slackError === 'missing_scope' || slackError === 'invalid_arguments') {
+        await slackClient.chat.postMessage(basePayload);
+      } else {
+        throw err;
+      }
+    }
+  } catch (error) {
+    console.warn(
+      '⚠️ [AGENT-PROGRESS] Failed to post progress update:',
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
+
 export async function handleErrorNode(state: SlackWorkflowState): Promise<Partial<SlackWorkflowState>> {
   try {
     console.log('🚨 [ERROR] Handling workflow error...');
@@ -663,12 +715,13 @@ async function getThreadHistory(channel: string, threadTs: string, currentEvent?
       limit: 5
     });
 
-    const messages = (result.messages || []).map(msg => ({
+    const messages: SlackMessage[] = (result.messages || []).map(msg => ({
       user: msg.user || '',
       text: msg.text || '',
       ts: msg.ts || '',
       thread_ts: msg.thread_ts,
-      bot_id: msg.bot_id
+      bot_id: msg.bot_id,
+      metadata: (msg as any).metadata
     }));
 
     // Add current message if not in history
@@ -680,7 +733,8 @@ async function getThreadHistory(channel: string, threadTs: string, currentEvent?
           text: currentText,
           ts: currentEvent.ts,
           thread_ts: currentEvent.thread_ts,
-          bot_id: currentEvent.bot_id
+          bot_id: currentEvent.bot_id,
+          metadata: (currentEvent as any).metadata
         });
       }
     }
@@ -697,6 +751,12 @@ function buildConversationContext(messages: any[]): ConversationMessage[] {
 
   for (const msg of messages) {
     if (!msg.text?.trim()) continue;
+
+    // Never include agent progress messages in the model context.
+    // These are for human visibility and can quickly pollute the thread history window.
+    const isProgressByMetadata = msg?.metadata?.event_type === 'agent_progress';
+    const isProgressByPrefix = typeof msg.text === 'string' && msg.text.startsWith(AGENT_PROGRESS_PREFIX);
+    if (isProgressByMetadata || isProgressByPrefix) continue;
     
     const role = msg.bot_id ? 'assistant' : 'user';
     const content = cleanMessageText(msg.text);

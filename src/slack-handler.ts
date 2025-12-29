@@ -5,6 +5,7 @@ export class SlackHandlerImpl implements SlackHandler {
   private slackClient: WebClient;
   private claudeService: ClaudeService;
   private botUserId: string = '';
+  private static readonly AGENT_PROGRESS_PREFIX = '⏳ *Progress:*';
 
   constructor(slackToken: string, claudeService: ClaudeService) {
     this.slackClient = new WebClient(slackToken);
@@ -181,7 +182,8 @@ export class SlackHandlerImpl implements SlackHandler {
         text: msg.text || '',
         ts: msg.ts || '',
         thread_ts: msg.thread_ts,
-        bot_id: msg.bot_id
+        bot_id: msg.bot_id,
+        metadata: (msg as any).metadata
       }));
 
       // Add current message if it's not already in the thread history
@@ -193,7 +195,8 @@ export class SlackHandlerImpl implements SlackHandler {
             text: currentText,
             ts: currentEvent.ts,
             thread_ts: currentEvent.thread_ts,
-            bot_id: currentEvent.bot_id
+            bot_id: currentEvent.bot_id,
+            metadata: (currentEvent as any).metadata
           });
         }
       }
@@ -211,6 +214,9 @@ export class SlackHandlerImpl implements SlackHandler {
     for (const msg of messages) {
       // Skip empty messages
       if (!msg.text?.trim()) continue;
+
+      // Never include agent progress messages in the model context.
+      if (msg.text.startsWith(SlackHandlerImpl.AGENT_PROGRESS_PREFIX)) continue;
       
       // Skip acknowledgment messages from being sent to LLM
       if (msg.ts === ackMessageTs || this.isAcknowledgmentMessage(msg.text)) continue;
