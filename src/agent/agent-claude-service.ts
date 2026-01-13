@@ -1,8 +1,34 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { initLogger, loadPrompt, traced, Span } from 'braintrust';
 import { sefariaAgentToolSchemas } from './agent-tool-schemas';
 import { SefariaAgentTools } from './sefaria-agent-tools';
 import { ConversationMessage } from '../types';
-import { traced, Span } from 'braintrust';
+
+// Braintrust configuration for the Agent API bot
+const BRAINTRUST_PROJECT_NAME = 'On Site Agent';
+const BRAINTRUST_PROMPT_SLUG = 'core-8fbc';
+
+// Fallback system prompt in case Braintrust prompt loading fails
+const FALLBACK_SYSTEM_PROMPT = `You are a Jewish text scholar with access to internal Sefaria tools. Follow these guidelines:
+
+RESPONSE REQUIREMENTS:
+• Respond in the same language the user asked the question in
+• Gauge user intent - provide short answers for simple questions, comprehensive analysis for complex ones
+• ALL claims must be sourced and cited with Sefaria links: [Source Name](https://www.sefaria.org/Reference)
+• If making unsourced claims, explicitly note: "Based on my analysis (not from a specific source):"
+• CRITICAL: Provide ONLY your final scholarly response. NEVER include internal search processes, tool usage descriptions, or step-by-step research narrative
+• Begin responses directly with substantive content about the topic
+• FORBIDDEN PHRASES: "Let me search," "I'll gather," "Now let me," "I found," "Let me look," "I'll check," or any process descriptions
+• Users should only see your final scholarly conclusions, not your research process
+
+SLACK FORMATTING (use exactly as specified):
+• Bold text: *bold text* (single asterisks only)
+• Italic text: _italic text_ (underscores only) 
+• Headers: *Header Text* (bold, no # symbols)
+• Bullets: • Bullet point (use bullet character)
+• Links: <https://www.sefaria.org/Genesis.3.4|Genesis 3:4> (angle brackets with pipe separator)
+• No markdown headers (#, ##, ###) - use *bold* instead
+• No double asterisks (**) - use single asterisks (*)`;
 
 type AnthropicMessageParam = {
   role: 'user' | 'assistant';
@@ -70,13 +96,80 @@ function describeToolCall(toolName: string, input: any): string {
 export class AgentClaudeService {
   private client: Anthropic;
   private tools: SefariaAgentTools;
+  private projectName: string;
+  private systemPrompt: string | null = null;
+  private promptMetadata: Record<string, any> | null = null;
+  private promptId: string | null = null;
+  private promptVersion: string | null = null;
+  private initialized: boolean = false;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, projectName: string = BRAINTRUST_PROJECT_NAME) {
     this.client = new Anthropic({ apiKey });
     this.tools = new SefariaAgentTools();
+    this.projectName = projectName;
+
+    initLogger({
+      projectName: this.projectName,
+      apiKey: process.env.BRAINTRUST_API_KEY,
+    });
+
+    console.log(`🧠 [BRAINTRUST] Agent service created for project "${this.projectName}"`);
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (this.initialized) return;
+
+    console.log(`🧠 [BRAINTRUST] Loading prompt from Braintrust (slug: ${BRAINTRUST_PROMPT_SLUG})...`);
+
+    try {
+      const prompt = await loadPrompt({
+        projectName: this.projectName,
+        slug: BRAINTRUST_PROMPT_SLUG,
+      });
+
+      this.promptId = prompt.id || null;
+      this.promptVersion = prompt.version || null;
+
+      const builtPrompt = prompt.build({});
+      this.promptMetadata = builtPrompt.span_info?.metadata?.prompt || null;
+
+      const systemMessage = builtPrompt.messages?.find(
+        (msg: any) => msg.role === 'system'
+      );
+
+      if (systemMessage?.content) {
+        const content = systemMessage.content;
+        if (typeof content === 'string') {
+          this.systemPrompt = content;
+        } else if (Array.isArray(content)) {
+          this.systemPrompt = content
+            .filter((block: any) => block.type === 'text')
+            .map((block: any) => block.text)
+            .join('\n');
+        } else {
+          this.systemPrompt = FALLBACK_SYSTEM_PROMPT;
+        }
+
+        console.log(
+          `✅ [BRAINTRUST] Agent prompt loaded (id: ${this.promptId}, version: ${this.promptVersion})`
+        );
+      } else {
+        console.warn(`⚠️ [BRAINTRUST] No system message found in prompt, using fallback`);
+        this.systemPrompt = FALLBACK_SYSTEM_PROMPT;
+      }
+
+      this.initialized = true;
+    } catch (error) {
+      console.error(`❌ [BRAINTRUST] Failed to load prompt:`, error);
+      console.warn(`⚠️ [BRAINTRUST] Using fallback system prompt`);
+      this.systemPrompt = FALLBACK_SYSTEM_PROMPT;
+      this.initialized = true;
+    }
   }
 
   async sendMessage(messages: ConversationMessage[], options?: AgentSendMessageOptions): Promise<string> {
+    await this.ensureInitialized();
+
     const conversation: AnthropicMessageParam[] = messages.map(m => ({
       role: m.role,
       content: [{ type: 'text', text: m.content }]
@@ -117,26 +210,7 @@ export class AgentClaudeService {
               model: 'claude-sonnet-4-5-20250929',
               max_tokens: 8000,
               temperature: 0.7,
-              system: `You are a Jewish text scholar with access to internal Sefaria tools. Follow these guidelines:
-
-RESPONSE REQUIREMENTS:
-• Respond in the same language the user asked the question in
-• Gauge user intent - provide short answers for simple questions, comprehensive analysis for complex ones
-• ALL claims must be sourced and cited with Sefaria links: [Source Name](https://www.sefaria.org/Reference)
-• If making unsourced claims, explicitly note: "Based on my analysis (not from a specific source):"
-• CRITICAL: Provide ONLY your final scholarly response. NEVER include internal search processes, tool usage descriptions, or step-by-step research narrative
-• Begin responses directly with substantive content about the topic
-• FORBIDDEN PHRASES: "Let me search," "I'll gather," "Now let me," "I found," "Let me look," "I'll check," or any process descriptions
-• Users should only see your final scholarly conclusions, not your research process
-
-SLACK FORMATTING (use exactly as specified):
-• Bold text: *bold text* (single asterisks only)
-• Italic text: _italic text_ (underscores only) 
-• Headers: *Header Text* (bold, no # symbols)
-• Bullets: • Bullet point (use bullet character)
-• Links: <https://www.sefaria.org/Genesis.3.4|Genesis 3:4> (angle brackets with pipe separator)
-• No markdown headers (#, ##, ###) - use *bold* instead
-• No double asterisks (**) - use single asterisks (*)`,
+              system: this.systemPrompt ?? FALLBACK_SYSTEM_PROMPT,
               messages: conversation as any,
               tools: sefariaAgentToolSchemas as any,
               tool_choice: { type: 'auto' } as any
