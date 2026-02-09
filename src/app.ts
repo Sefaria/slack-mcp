@@ -390,7 +390,8 @@ class SlackMCPApp {
   private async processWithWorkflow(event: SlackMessageEvent, bot: BotConfig): Promise<void> {
     try {
       // Short-circuit disabled bots with a redirect message
-      if (SlackMCPApp.DISABLED_BOTS.has(bot.name)) {
+      // Skip bot messages to avoid infinite loop (bot's own replies trigger new events)
+      if (SlackMCPApp.DISABLED_BOTS.has(bot.name) && !event.bot_id && !event.subtype) {
         console.log(`[WORKFLOW] Bot "${bot.name}" is disabled, sending redirect message`);
         const { WebClient } = await import('@slack/web-api');
         const client = new WebClient(bot.slackToken);
