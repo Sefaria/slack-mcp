@@ -382,8 +382,27 @@ class SlackMCPApp {
     }
   }
 
+  // Bots that have been disabled. Messages to these bots get a redirect reply instead of processing.
+  private static readonly DISABLED_BOTS = new Set(['beta', 'betaagent']);
+  private static readonly DISABLED_BOT_MESSAGE =
+    'This agent has been turned off. Please go to <https://www.chat.cauldron.sefaria.org/|chat.cauldron.sefaria.org> to keep using the agent. If you don\'t see the agent there, please ask someone from the dev team for help.';
+
   private async processWithWorkflow(event: SlackMessageEvent, bot: BotConfig): Promise<void> {
     try {
+      // Short-circuit disabled bots with a redirect message
+      if (SlackMCPApp.DISABLED_BOTS.has(bot.name)) {
+        console.log(`[WORKFLOW] Bot "${bot.name}" is disabled, sending redirect message`);
+        const { WebClient } = await import('@slack/web-api');
+        const client = new WebClient(bot.slackToken);
+        await client.chat.postMessage({
+          channel: event.channel,
+          thread_ts: event.thread_ts || event.ts,
+          text: SlackMCPApp.DISABLED_BOT_MESSAGE,
+          mrkdwn: true
+        });
+        return;
+      }
+
       console.log(`🔄 [WORKFLOW] Starting LangGraph workflow for bot "${bot.name}"...`);
       console.log('🔄 [WORKFLOW] Event summary:', {
         user: event.user,
